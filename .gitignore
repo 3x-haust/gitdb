@@ -1,7 +1,10 @@
 node_modules
 dist
 .gitdb
+.gitdb-example-public
 .env
+examples/express-prisma/.env
+examples/express-prisma/generated
 .DS_Store
 coverage
 *.tsbuildinfo

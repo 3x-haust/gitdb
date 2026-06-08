@@ -2,9 +2,9 @@ import { type GitHubConfig, GitHubConfigSchema } from "../github/types.js"
 
 export function parseGitHubEnv(env: NodeJS.ProcessEnv): GitHubConfig | null {
   if (
-    env["GITDB_GITHUB_OWNER"] === undefined ||
-    env["GITDB_GITHUB_REPO"] === undefined ||
-    env["GITDB_GITHUB_TOKEN"] === undefined
+    isBlank(env["GITDB_GITHUB_OWNER"]) ||
+    isBlank(env["GITDB_GITHUB_REPO"]) ||
+    isBlank(env["GITDB_GITHUB_TOKEN"])
   ) {
     return null
   }
@@ -15,4 +15,8 @@ export function parseGitHubEnv(env: NodeJS.ProcessEnv): GitHubConfig | null {
     repo: env["GITDB_GITHUB_REPO"],
     token: env["GITDB_GITHUB_TOKEN"],
   })
+}
+
+function isBlank(value: string | undefined): boolean {
+  return value === undefined || value.trim().length === 0
 }

@@ -69,10 +69,16 @@ node dist/src/cli/main.js keygen
 that exact value outside Git. If the key changes, previously encrypted data
 cannot be decrypted.
 
+Set `GITDB_ENCRYPTION=off` only when you intentionally want plaintext demo
+files in a public repository. In that mode `GITDB_KEY` is not required and
+GitDB writes `manifest.json` plus log JSON files instead of encrypted `.enc`
+files.
+
 For local-only testing, only these values are required:
 
 ```env
 GITDB_KEY=generated-by-gitdb-keygen
+GITDB_ENCRYPTION=on
 GITDB_ROOT=.gitdb
 GITDB_HOST=127.0.0.1
 GITDB_PORT=7432
@@ -102,6 +108,30 @@ commits do not trigger application auto-deploys.
 token restricted to the target repository with read/write `Contents`
 permission. The token is only for pushing encrypted GitDB objects; never commit
 it to the repository.
+
+## Express + Prisma Example
+
+This example shows the shape of a real API service. Express serves HTTP routes,
+Prisma connects to GitDB through the PostgreSQL facade, and GitDB persists to
+the store configured by `examples/express-prisma/.env`.
+
+```bash
+cp examples/express-prisma/.env.example examples/express-prisma/.env
+pnpm example:express-prisma
+```
+
+In another terminal:
+
+```bash
+curl http://127.0.0.1:3090/health
+curl -X POST http://127.0.0.1:3090/seed
+curl http://127.0.0.1:3090/people
+```
+
+The example `.env` defaults to `GITDB_ENCRYPTION=off` so public GitHub storage
+is human-readable for inspection. Add `GITDB_GITHUB_TOKEN` to make it write to
+the configured public repo branch. Leave the token empty to run the same API
+against local plaintext files under `.gitdb-example-public`.
 
 ## Security Model
 

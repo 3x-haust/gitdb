@@ -1,4 +1,5 @@
 import { Controller, Get } from "@nestjs/common"
+import type { StoreMode } from "../cli/store-factory.js"
 import { gitDbRuntime } from "./gitdb.runtime.js"
 
 type HealthResponse = {
@@ -6,7 +7,7 @@ type HealthResponse = {
     readonly host: string
     readonly port: number
   } | null
-  readonly mode: "github" | "local"
+  readonly mode: StoreMode
   readonly status: "ready" | "starting"
 }
 

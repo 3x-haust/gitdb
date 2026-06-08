@@ -1,12 +1,10 @@
-import { createStoreFromEnv } from "../cli/store-factory.js"
+import { createStoreFromEnv, type StoreMode } from "../cli/store-factory.js"
 import { createGitDbServer, type GitDbServer } from "../protocol/postgres-server.js"
 import { GitDbEngine } from "../sql/engine.js"
 
-type RuntimeMode = "github" | "local"
-
 export class GitDbRuntime {
   #server: GitDbServer | null = null
-  #mode: RuntimeMode = "local"
+  #mode: StoreMode = "local"
 
   async start(): Promise<void> {
     const { env, mode, store } = createStoreFromEnv(process.env)
@@ -22,7 +20,7 @@ export class GitDbRuntime {
 
   health(): {
     readonly facade: { readonly host: string; readonly port: number } | null
-    readonly mode: RuntimeMode
+    readonly mode: StoreMode
     readonly status: "ready" | "starting"
   } {
     return {
