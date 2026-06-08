@@ -60,9 +60,11 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   if (error instanceof Error) {
     logger.error({ error: error.message, stack: error.stack }, "gitdb failed")
+    process.stderr.write(`${error.stack ?? error.message}\n`)
     process.exitCode = 1
     return
   }
   logger.error({ error: String(error) }, "gitdb failed")
+  process.stderr.write(`${String(error)}\n`)
   process.exitCode = 1
 })

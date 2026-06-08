@@ -25,7 +25,7 @@ the durable storage layer writes encrypted GitDB files to GitHub.
 ```bash
 pnpm install
 pnpm build
-export GITDB_KEY="$(node dist/cli/main.js keygen)"
+export GITDB_KEY="$(node dist/src/cli/main.js keygen)"
 pnpm start
 ```
 
@@ -81,8 +81,9 @@ The service is a long-running TCP server. Build and run it with:
 
 ```bash
 docker build -t gitdb .
-docker run -p 7432:7432 --env-file .env gitdb
+docker run -p 3000:3000 -p 7432:7432 --env-file .env gitdb
 ```
 
-The repository can be deployed with `@3xhaust/deploy-cli` once a Deploy Platform
-project and target domain are configured.
+`pnpm start` runs the deployable NestJS control plane and starts the PostgreSQL
+facade in the same process. `pnpm start:facade` runs only the TCP facade for
+local ORM testing.

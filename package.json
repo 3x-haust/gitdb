@@ -4,7 +4,7 @@
   "description": "GitHub-native encrypted database with a PostgreSQL-compatible facade for existing ORMs.",
   "type": "module",
   "bin": {
-    "gitdb": "./dist/cli/main.js"
+    "gitdb": "./dist/src/cli/main.js"
   },
   "files": [
     "dist",
@@ -17,19 +17,27 @@
     "format": "biome check --write .",
     "test": "vitest run",
     "test:e2e": "vitest run tests/e2e.test.ts",
-    "start": "node dist/cli/main.js serve"
+    "start": "node dist/src/http/main.js",
+    "start:facade": "node dist/src/cli/main.js serve",
+    "start:prod": "node dist/src/http/main.js"
   },
   "dependencies": {
+    "@nestjs/common": "^11.1.25",
+    "@nestjs/core": "^11.1.25",
+    "@nestjs/platform-express": "^11.1.25",
     "@octokit/rest": "22.0.1",
     "alasql": "4.17.3",
     "commander": "15.0.0",
     "pg-server": "0.1.8",
-    "pino": "10.3.1",
     "pgsql-ast-parser": "12.0.2",
+    "pino": "10.3.1",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.16",
+    "@types/express": "^5.0.6",
     "@types/node": "25.9.2",
     "@types/pg": "8.20.0",
     "pg": "8.21.0",
