@@ -25,7 +25,7 @@ const server = await createGitDbServer({
   host: env.GITDB_HOST,
   port: Number.parseInt(env.GITDB_PORT, 10),
 })
-const databaseUrl = `postgresql://token@${server.host}:${server.port}/main`
+const databaseUrl = `postgresql://${server.host}:${server.port}/main`
 const adapter = new PrismaPg({ connectionString: databaseUrl })
 
 const prisma = new PrismaClient({

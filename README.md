@@ -11,7 +11,7 @@ the durable storage layer writes encrypted GitDB files to GitHub.
 
 ## Features
 
-- PostgreSQL-compatible TCP endpoint: `postgresql://token@localhost:7432/main`
+- PostgreSQL-compatible TCP endpoint: `postgresql://localhost:7432/main`
 - ORM-friendly facade for Prisma, TypeORM, Drizzle, and Kysely PostgreSQL modes
 - SQL support for `CREATE TABLE`, `INSERT`, `SELECT`, `JOIN`, `GROUP BY`,
   `ORDER BY`, and aggregate queries through the current engine
@@ -32,13 +32,13 @@ pnpm start
 In another terminal:
 
 ```bash
-psql postgresql://token@127.0.0.1:7432/main
+psql postgresql://127.0.0.1:7432/main
 ```
 
 Or use any PostgreSQL ORM config:
 
 ```text
-DATABASE_URL=postgresql://token@127.0.0.1:7432/main
+DATABASE_URL=postgresql://127.0.0.1:7432/main
 ```
 
 ## Facade Environment

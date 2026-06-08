@@ -31,7 +31,7 @@ describe("PostgreSQL facade", () => {
     const server = await createGitDbServer({ engine, host: "127.0.0.1", port: 0 })
     servers.push(server)
     const client = new Client({
-      connectionString: `postgresql://token@127.0.0.1:${server.port}/main`,
+      connectionString: `postgresql://127.0.0.1:${server.port}/main`,
     })
 
     // When: an ordinary Postgres client drives schema, writes, and a relation join.
