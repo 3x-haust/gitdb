@@ -1,13 +1,25 @@
 # GitDB
 
-GitDB is a GitHub-native encrypted database with a PostgreSQL-compatible facade.
-It is designed so existing ORMs can connect with a normal `postgres://` URL while
-GitHub stores encrypted database segments, manifests, and mutation logs.
+GitDB is a GitHub-native database with a PostgreSQL-compatible facade.
+
+Use a GitHub repository as the durable database for a project, connect from
+existing ORMs with a normal `postgresql://` URL, and choose whether public data
+is encrypted or directly inspectable in GitHub's web UI.
 
 GitDB does not upload SQLite `.db` files and does not use SQLite as its storage
-engine. The SQL surface is served through a PostgreSQL-compatible TCP facade,
-the execution layer supports advanced SQL through an embedded SQL engine, and
-the durable storage layer writes encrypted GitDB files to GitHub.
+engine. It runs a PostgreSQL-compatible TCP facade, executes SQL in an embedded
+engine, and persists GitDB manifests, logs, encrypted segments, and visible
+table snapshots to GitHub.
+
+## Why
+
+GitHub is already where many small teams manage source, review changes, branch,
+audit history, and collaborate. GitDB explores a simple idea: for project-scale
+apps, can a repository also be the durable, reviewable data layer?
+
+The answer is yes for human-readable public datasets, demos, agent state,
+content tools, project metadata, and low-frequency app data. It is not a
+replacement for high-throughput OLTP databases.
 
 ## Features
 
@@ -15,10 +27,21 @@ the durable storage layer writes encrypted GitDB files to GitHub.
 - ORM-friendly facade for Prisma, TypeORM, Drizzle, and Kysely PostgreSQL modes
 - SQL support for `CREATE TABLE`, `INSERT`, `SELECT`, `JOIN`, `GROUP BY`,
   `ORDER BY`, and aggregate queries through the current engine
-- Encrypted manifest and mutation log segments
-- GitHub Contents API durable store
-- Local encrypted store for development and tests
+- One GitHub database repository per app or project
+- Public plaintext mode with Firebase-style `table/schema.json` and
+  `table/data.json`
+- Encrypted mode for public or private repositories
+- Local encrypted and plaintext stores for development and tests
 - Public repository safe by default when `GITDB_KEY` is kept outside the repo
+
+## What It Is Not
+
+- Not SQLite-over-GitHub
+- Not a `.db` file uploader
+- Not a GitHub API call per query
+- Not a replacement for Postgres, MySQL, or SQLite in high-write OLTP systems
+- Not a PostgreSQL-compatible database engine yet; it implements the subset
+  needed for current ORM experiments
 
 ## Quick Start
 
@@ -40,6 +63,48 @@ Or use any PostgreSQL ORM config:
 ```text
 DATABASE_URL=postgresql://127.0.0.1:7432/main
 ```
+
+## Storage Layout
+
+Encrypted mode stores opaque files:
+
+```text
+gitdb/v1/manifest.enc
+gitdb/v1/log/00000000000000000001.enc
+```
+
+Plaintext mode stores both an internal mutation log and a human-facing table
+view:
+
+```text
+gitdb/v1/manifest.json
+gitdb/v1/people/schema.json
+gitdb/v1/people/data.json
+gitdb/v1/teams/schema.json
+gitdb/v1/teams/data.json
+gitdb/v1/log/00000000000000000001.json
+```
+
+`schema.json` contains table structure:
+
+```json
+{
+  "columns": ["id", "name", "team_id"],
+  "name": "people"
+}
+```
+
+`data.json` contains only rows:
+
+```json
+[
+  { "id": "p1", "name": "Lin", "team_id": "t1" },
+  { "id": "p2", "name": "Ada", "team_id": "t2" }
+]
+```
+
+You can edit `data.json` in GitHub, commit it, and the next GitDB process
+opening that prefix will restore from the visible table snapshots.
 
 ## Facade Environment
 
@@ -134,22 +199,6 @@ repo `3x-haust/gitdb-example-db`, not this source-code repository. Add
 `GITDB_GITHUB_TOKEN` to make it write there. Leave the token empty to run the
 same API against local plaintext files under `.gitdb-example-public`.
 
-In plaintext GitHub mode, GitDB writes Firebase-style table snapshots alongside
-the internal mutation log. After seeding, the public database repo contains
-files such as:
-
-```text
-gitdb/v1/people/schema.json
-gitdb/v1/people/data.json
-gitdb/v1/teams/schema.json
-gitdb/v1/teams/data.json
-gitdb/v1/log/00000000000000000001.json
-```
-
-The `data.json` files are the human-facing public data view. You can inspect
-and edit them in GitHub's web UI, commit the change, and the next GitDB process
-opening that prefix will restore from those visible table snapshots.
-
 For GitHub-backed example mode, GitDB creates public repo
 `3x-haust/gitdb-example-db` if it does not exist. The token must be allowed to
 create repositories under `3x-haust`; after the repo exists, it must be able to
@@ -159,6 +208,32 @@ branch name is wrong.
 
 Because the example intentionally runs in plaintext mode, its `.env.example`
 does not include `GITDB_KEY`.
+
+## Benchmarks
+
+Run:
+
+```bash
+pnpm benchmark
+GITDB_BENCH_GITHUB_ROWS=4 pnpm benchmark:github
+```
+
+Latest local run:
+
+| Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| local plaintext visible snapshots | 250 | 1443.90 | 173.14 | 32.97 | 140.05 |
+| local encrypted mutation log | 250 | 761.99 | 328.09 | 4.31 | 322.51 |
+| postgres facade over local encrypted | 250 | 987.93 | 253.05 | 19.74 | 0.00 |
+| github plaintext contents api | 2 | 14157.49 | 0.14 | 6.70 | 1812.62 |
+
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for interpretation and the
+performance plan.
+
+The key result: local query/write performance is acceptable for experiments,
+but direct per-mutation GitHub Contents API writes are too slow and can hit
+transient GitHub 5xx responses under bursts. The production path is local WAL
+plus batched Git commits.
 
 ## Security Model
 
@@ -170,6 +245,32 @@ the storage layer evolves.
 Public GitHub can still reveal metadata such as commit timing, file count, and
 approximate file size. Use batch writes, padding, and compaction for workloads
 where metadata leakage matters.
+
+## Performance Roadmap
+
+- Local WAL first: return success after local durable write in `fast` mode
+- Git Database tree commits: batch many file updates into one Git commit
+- Snapshot throttling: do not rewrite visible `data.json` after every mutation
+- Chunked rows/pages: avoid rewriting a whole table for one row change
+- Local indexes: keep joins and filters off the GitHub hot path
+- Manifest versions: skip unchanged tables on cold start
+- Strong mode: block until GitHub commit for workflows that need remote
+  durability before returning
+
+## Prior Art
+
+GitDB borrows README and product-shape lessons from projects around this space:
+
+- [Dolt](https://github.com/dolthub/dolt): SQL database with Git-style version
+  control, a crisp "Git for Data" positioning.
+- [Supabase](https://github.com/supabase/supabase): Firebase-like developer
+  experience built around Postgres and open-source components.
+- [Nhost](https://github.com/nhost/nhost): open-source Firebase alternative
+  with GraphQL and SQL in the first screen.
+- [PocketBase](https://github.com/pocketbase/pocketbase): small, inspectable
+  backend with database, realtime, auth, and admin UI.
+- [Appwrite](https://github.com/appwrite/appwrite): all-in-one backend platform
+  with clear product surface and self-hosting story.
 
 ## Release Commands
 

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 import { GitDbStorageError } from "../src/errors.js"
-import { gitHubWriteError, isGitHubConflict, isGitHubNotFound } from "../src/github/errors.js"
+import {
+  gitHubWriteError,
+  isGitHubConflict,
+  isGitHubNotFound,
+  isGitHubTransient,
+} from "../src/github/errors.js"
 import type { GitHubConfig } from "../src/github/types.js"
 
 class FakeGitHubStatusError extends Error {
@@ -51,6 +56,17 @@ describe("GitHub error handling", () => {
     const result = isGitHubConflict(error)
 
     // Then: stores can refetch the latest sha and retry the write.
+    expect(result).toBe(true)
+  })
+
+  it("treats GitHub 502 as a retryable transient failure", () => {
+    // Given: GitHub returned a temporary server-side write failure.
+    const error = new FakeGitHubStatusError(502)
+
+    // When: GitDB classifies the provider error.
+    const result = isGitHubTransient(error)
+
+    // Then: stores can retry instead of failing the write immediately.
     expect(result).toBe(true)
   })
 })

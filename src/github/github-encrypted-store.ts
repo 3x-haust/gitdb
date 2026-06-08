@@ -4,7 +4,12 @@ import type { Cipher } from "../crypto/aes-gcm.js"
 import { GitDbStorageError } from "../errors.js"
 import type { GitDbStore } from "../storage/store.js"
 import { type GitDbManifest, type PersistedMutation, type SegmentId, segmentId } from "../types.js"
-import { gitHubWriteError, isGitHubConflict, isGitHubNotFound } from "./errors.js"
+import {
+  gitHubWriteError,
+  isGitHubConflict,
+  isGitHubNotFound,
+  isGitHubTransient,
+} from "./errors.js"
 import { ensureGitHubRepository } from "./repository.js"
 import { type GitHubConfig, GitHubFileSchema } from "./types.js"
 
@@ -28,13 +33,22 @@ type WriteFileInput = {
   readonly plaintext: unknown
 }
 
+const GITHUB_API_VERSION = "2022-11-28"
+
 export class GitHubEncryptedStore implements GitDbStore {
   readonly #octokit: Octokit
   readonly #config: GitHubConfig
   readonly #cipher: Cipher
 
   constructor(config: GitHubConfig, cipher: Cipher) {
-    this.#octokit = new Octokit({ auth: config.token })
+    this.#octokit = new Octokit({
+      auth: config.token,
+      request: {
+        headers: {
+          "X-GitHub-Api-Version": GITHUB_API_VERSION,
+        },
+      },
+    })
     this.#config = config
     this.#cipher = cipher
   }
@@ -104,7 +118,7 @@ export class GitHubEncryptedStore implements GitDbStore {
 
   async #writeFile(input: WriteFileInput): Promise<void> {
     let repositoryBootstrapped = false
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
       const existing = await this.#getExistingSha(input.path)
       const request = this.#writeRequest(input, existing)
       try {
@@ -117,6 +131,10 @@ export class GitHubEncryptedStore implements GitDbStore {
           continue
         }
         if (isGitHubConflict(error)) {
+          continue
+        }
+        if (isGitHubTransient(error)) {
+          await sleep(500 * (attempt + 1))
           continue
         }
         throw this.#writeError(input.path, error)
@@ -168,4 +186,10 @@ export class GitHubEncryptedStore implements GitDbStore {
       throw error
     }
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
 }

@@ -18,6 +18,11 @@ export function isGitHubConflict(error: unknown): boolean {
   return githubStatus(error) === 409
 }
 
+export function isGitHubTransient(error: unknown): boolean {
+  const status = githubStatus(error)
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504
+}
+
 export function gitHubWriteError(
   config: GitHubConfig,
   path: string,

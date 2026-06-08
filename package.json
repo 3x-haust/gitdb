@@ -13,6 +13,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "benchmark": "pnpm build && node scripts/benchmark.mjs",
+    "benchmark:github": "pnpm build && node scripts/benchmark.mjs --github",
     "check": "biome check . && tsc --noEmit",
     "example": "pnpm example:express-prisma",
     "example:express-prisma": "pnpm build && pnpm exec prisma generate --schema examples/express-prisma/schema.prisma && node examples/express-prisma/server.mjs",
