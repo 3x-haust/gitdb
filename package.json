@@ -14,6 +14,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "biome check . && tsc --noEmit",
+    "example": "pnpm example:quickstart",
+    "example:quickstart": "pnpm build && node dist/examples/quickstart.js",
     "format": "biome check --write .",
     "test": "vitest run",
     "test:e2e": "vitest run tests/e2e.test.ts",

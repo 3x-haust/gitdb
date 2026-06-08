@@ -41,6 +41,18 @@ Or use any PostgreSQL ORM config:
 DATABASE_URL=postgresql://token@127.0.0.1:7432/main
 ```
 
+## Try The Example
+
+Run the packaged quickstart example without a GitHub token:
+
+```bash
+pnpm example
+```
+
+The example starts a temporary encrypted GitDB store, opens the PostgreSQL
+facade on a random local port, connects with the normal `pg` PostgreSQL client,
+creates two tables, inserts rows, and runs a `JOIN ... ORDER BY` query.
+
 ## GitHub Storage
 
 Set these variables to persist encrypted GitDB files to a GitHub repository:
