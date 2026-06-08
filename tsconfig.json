@@ -25,6 +25,6 @@
     "skipLibCheck": true,
     "incremental": true
   },
-  "include": ["src", "tests", "vitest.config.ts"],
+  "include": ["main.ts", "src", "tests", "vitest.config.ts"],
   "exclude": ["node_modules", "dist"]
 }
