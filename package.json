@@ -1,0 +1,47 @@
+{
+  "name": "@3xhaust/gitdb",
+  "version": "0.1.0",
+  "description": "GitHub-native encrypted database with a PostgreSQL-compatible facade for existing ORMs.",
+  "type": "module",
+  "bin": {
+    "gitdb": "./dist/cli/main.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "biome check . && tsc --noEmit",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "test:e2e": "vitest run tests/e2e.test.ts",
+    "start": "node dist/cli/main.js serve"
+  },
+  "dependencies": {
+    "@octokit/rest": "22.0.1",
+    "alasql": "4.17.3",
+    "commander": "15.0.0",
+    "pg-server": "0.1.8",
+    "pino": "10.3.1",
+    "pgsql-ast-parser": "12.0.2",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.4.16",
+    "@types/node": "25.9.2",
+    "@types/pg": "8.20.0",
+    "pg": "8.21.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.8"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/3x-haust/gitdb.git"
+  }
+}
