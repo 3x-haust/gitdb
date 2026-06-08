@@ -10,7 +10,8 @@ import type {
 import {
   parsePlaintextManifest,
   parsePlaintextMutation,
-  parseVisibleTableSnapshot,
+  parseVisibleTableRows,
+  parseVisibleTableSchema,
   segmentIdForSequence,
   stringifyPlaintext,
 } from "./plaintext-codec.js"
@@ -58,9 +59,14 @@ export class LocalPlaintextStore implements GitDbStore {
     const tableNames = await this.#readDirectoryNames()
     const tables = []
     for (const tableName of tableNames) {
-      const payload = await this.#readNullable(join(this.#root, tableName, "data.json"))
-      if (payload !== null) {
-        tables.push(parseVisibleTableSnapshot(payload))
+      const schemaPayload = await this.#readNullable(join(this.#root, tableName, "schema.json"))
+      const dataPayload = await this.#readNullable(join(this.#root, tableName, "data.json"))
+      if (schemaPayload !== null && dataPayload !== null) {
+        const schema = parseVisibleTableSchema(schemaPayload)
+        tables.push({
+          ...schema,
+          rows: parseVisibleTableRows(dataPayload),
+        })
       }
     }
     return tables.length === 0 ? null : { tables }
@@ -72,7 +78,7 @@ export class LocalPlaintextStore implements GitDbStore {
         columns: table.columns,
         name: table.name,
       })
-      await this.#writeJson(join(this.#root, table.name, "data.json"), table)
+      await this.#writeJson(join(this.#root, table.name, "data.json"), table.rows)
     }
   }
 

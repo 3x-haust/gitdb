@@ -16,6 +16,11 @@ export type VisibleTableSnapshot = {
   readonly rows: readonly SqlRow[]
 }
 
+export type VisibleTableSchema = {
+  readonly name: string
+  readonly columns: readonly string[]
+}
+
 export type VisibleDatabaseSnapshot = {
   readonly tables: readonly VisibleTableSnapshot[]
 }

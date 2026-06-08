@@ -3,7 +3,8 @@ import { GitDbStorageError } from "../errors.js"
 import {
   parsePlaintextManifest,
   parsePlaintextMutation,
-  parseVisibleTableSnapshot,
+  parseVisibleTableRows,
+  parseVisibleTableSchema,
   segmentIdForSequence,
   stringifyPlaintext,
 } from "../storage/plaintext-codec.js"
@@ -72,9 +73,16 @@ export class GitHubPlaintextStore implements GitDbStore {
     const tableNames = await this.#readTableNames()
     const tables = []
     for (const tableName of tableNames) {
-      const payload = await this.#readNullable(`${this.#config.prefix}/${tableName}/data.json`)
-      if (payload !== null) {
-        tables.push(parseVisibleTableSnapshot(payload))
+      const schemaPayload = await this.#readNullable(
+        `${this.#config.prefix}/${tableName}/schema.json`,
+      )
+      const dataPayload = await this.#readNullable(`${this.#config.prefix}/${tableName}/data.json`)
+      if (schemaPayload !== null && dataPayload !== null) {
+        const schema = parseVisibleTableSchema(schemaPayload)
+        tables.push({
+          ...schema,
+          rows: parseVisibleTableRows(dataPayload),
+        })
       }
     }
     return tables.length === 0 ? null : { tables }
@@ -93,7 +101,7 @@ export class GitHubPlaintextStore implements GitDbStore {
       await this.#writeFile({
         message: `gitdb sync ${table.name} data`,
         path: `${this.#config.prefix}/${table.name}/data.json`,
-        plaintext: table,
+        plaintext: table.rows,
       })
     }
   }

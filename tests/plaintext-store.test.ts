@@ -47,14 +47,18 @@ describe("plaintext store", () => {
     // When: a table is created and later edited through the visible snapshot file.
     await first.execute("CREATE TABLE people (id STRING, name STRING)")
     await first.execute("INSERT INTO people VALUES ('p1', 'Lin')")
+    const schemaPath = join(root, "gitdb/v1/people/schema.json")
     const dataPath = join(root, "gitdb/v1/people/data.json")
+    const visibleSchema = await readFile(schemaPath, "utf8")
     const visibleData = await readFile(dataPath, "utf8")
     await writeFile(dataPath, visibleData.replace('"Lin"', '"Ada"'), "utf8")
     const second = await GitDbEngine.open({ store })
     const result = await second.execute("SELECT name FROM people WHERE id = 'p1'")
 
     // Then: the visible table file is human-readable and drives the reopened DB state.
-    expect(visibleData).toContain('"people"')
+    expect(visibleSchema).toContain('"columns"')
+    expect(visibleData).not.toContain('"columns"')
+    expect(visibleData).not.toContain('"people"')
     expect(visibleData).toContain('"Lin"')
     expect(result.rows).toEqual([{ name: "Ada" }])
   })

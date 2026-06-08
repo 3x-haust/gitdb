@@ -5,6 +5,7 @@ import {
   type SegmentId,
   segmentId,
   type VisibleDatabaseSnapshot,
+  type VisibleTableSchema,
   type VisibleTableSnapshot,
 } from "../types.js"
 
@@ -22,9 +23,16 @@ const MutationSchema = z.object({
   at: z.string(),
 })
 
-const VisibleTableSnapshotSchema = z.object({
+const VisibleTableSchemaSchema = z.object({
   name: z.string().min(1),
   columns: z.array(z.string().min(1)),
+})
+
+const VisibleTableRowsSchema = z.array(
+  z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])),
+)
+
+const VisibleTableSnapshotSchema = VisibleTableSchemaSchema.extend({
   rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))),
 })
 
@@ -46,6 +54,14 @@ export function parsePlaintextMutation(payload: string): PersistedMutation {
 
 export function parseVisibleTableSnapshot(payload: string): VisibleTableSnapshot {
   return VisibleTableSnapshotSchema.parse(JSON.parse(payload))
+}
+
+export function parseVisibleTableSchema(payload: string): VisibleTableSchema {
+  return VisibleTableSchemaSchema.parse(JSON.parse(payload))
+}
+
+export function parseVisibleTableRows(payload: string): VisibleTableSnapshot["rows"] {
+  return VisibleTableRowsSchema.parse(JSON.parse(payload))
 }
 
 export function parseVisibleDatabaseSnapshot(payload: string): VisibleDatabaseSnapshot {
