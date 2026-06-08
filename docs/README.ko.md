@@ -229,6 +229,29 @@ gitdb serve
 - 공개 demo data: `GITDB_ENCRYPTION=off`
 - 실제 public/private data: `GITDB_ENCRYPTION=on`
 
+## Runtime과 신뢰 모델
+
+`gitdb serve`와 hosted GitDB endpoint는 같은 종류의 runtime입니다. 둘 다
+PostgreSQL facade, SQL engine, GitHub sync를 담당합니다. 중요한 차이는 그 runtime이
+어디에서 실행되느냐입니다.
+
+| Mode | Runtime 위치 | 누가 복호화 가능한가 | 적합한 경우 |
+| --- | --- | --- | --- |
+| Self-hosted encrypted | 유저 앱 서버, VPS, 로컬, private infra | `GITDB_KEY`를 가진 유저 환경만 | 실제 앱 데이터, public encrypted repo, private repo |
+| Hosted plaintext | `gitdb.3xhaust.dev` 같은 GitDB hosted runtime | 어차피 GitHub repo를 보는 모두 | public demo, public dataset, inspectable example |
+| Hosted encrypted | GitDB hosted runtime | hosted runtime이 key를 받아야 함 | 편의성을 위한 managed mode, zero-knowledge 아님 |
+
+암호화된 데이터를 “내 서비스만 복호화 가능”하게 만들고 싶다면 GitDB를 직접
+호스트해야 합니다.
+
+```text
+Your App -> your gitdb serve -> encrypted GitHub repo
+```
+
+`GITDB_KEY`를 hosted runtime에 보내는 순간, 그 runtime은 query 실행을 위해
+plaintext를 처리할 수 있습니다. 이건 의도적으로 key를 맡기는 managed mode이지,
+운영자도 볼 수 없는 구조가 아닙니다.
+
 ## 아키텍처
 
 GitDB는 세 층으로 나뉩니다.
@@ -366,6 +389,11 @@ test용 TCP facade만 실행합니다.
 ```text
 https://gitdb.3xhaust.dev/health
 ```
+
+`gitdb.3xhaust.dev`는 hosted GitDB runtime/control-plane instance로 보면 됩니다.
+public plaintext workflow, demo, setup flow, 향후 managed mode에는 유용합니다.
+하지만 encrypted data를 내 서비스만 복호화하게 만들고 싶다면 직접 `gitdb serve`를
+실행하고 `GITDB_KEY`를 그 환경에만 둬야 합니다.
 
 HTTP deployment가 외부 ORM client에 TCP facade를 자동으로 노출하는 것은 아닙니다.
 remote ORM access가 필요하면 application 근처에서 `gitdb serve`를 실행하거나 TCP

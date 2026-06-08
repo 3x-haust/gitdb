@@ -227,6 +227,28 @@ Recommended pattern:
 - Public demo data: `GITDB_ENCRYPTION=off`
 - Real public or private data: `GITDB_ENCRYPTION=on`
 
+## Runtime And Trust Model
+
+`gitdb serve` and a hosted GitDB endpoint are the same kind of runtime:
+PostgreSQL facade, SQL engine, and GitHub sync. The important question is where
+that runtime runs.
+
+| Mode | Runtime location | Who can decrypt? | Best for |
+| --- | --- | --- | --- |
+| Self-hosted encrypted | Your app server, VPS, local machine, or private infra | Only the environment holding `GITDB_KEY` | Real app data, public encrypted repos, private repos |
+| Hosted plaintext | GitDB hosted runtime such as `gitdb.3xhaust.dev` | Everyone can read the GitHub repo anyway | Public demos, public datasets, inspectable examples |
+| Hosted encrypted | GitDB hosted runtime | The hosted runtime must receive/use the key | Managed convenience mode, not zero-knowledge |
+
+If you want encrypted data where only your service can decrypt it, run GitDB
+yourself:
+
+```text
+Your App -> your gitdb serve -> encrypted GitHub repo
+```
+
+Do not send `GITDB_KEY` to a hosted runtime unless you intentionally choose a
+managed mode where that runtime is trusted to process plaintext query results.
+
 ## Architecture
 
 GitDB is split into three layers:
@@ -369,6 +391,11 @@ The current public HTTP control plane is deployed at:
 ```text
 https://gitdb.3xhaust.dev/health
 ```
+
+`gitdb.3xhaust.dev` should be treated as a hosted GitDB runtime/control-plane
+instance. It is useful for public plaintext workflows, demos, setup flows, and
+future managed modes. For encrypted data where only your service may decrypt the
+database, run `gitdb serve` in your own environment and keep `GITDB_KEY` there.
 
 HTTP deployment does not automatically expose the TCP facade to external ORM
 clients. For remote ORM access, run `gitdb serve` near the application or deploy
