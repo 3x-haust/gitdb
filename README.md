@@ -1,96 +1,85 @@
 # GitDB
 
-GitDB is a GitHub-native database with a PostgreSQL-compatible facade.
+English | [한국어](docs/README.ko.md)
 
-Use a GitHub repository as the durable database for a project, connect from
-existing ORMs with a normal `postgresql://` URL, and choose whether public data
-is encrypted or directly inspectable in GitHub's web UI.
+GitDB turns a GitHub repository into a project-scoped database.
 
-GitDB does not upload SQLite `.db` files and does not use SQLite as its storage
-engine. It runs a PostgreSQL-compatible TCP facade, executes SQL in an embedded
-engine, and persists GitDB manifests, logs, encrypted segments, and visible
-table snapshots to GitHub.
+It exposes a PostgreSQL-compatible local TCP endpoint, accepts SQL from tools
+such as Prisma and `pg`, executes the query in GitDB's engine, and persists the
+database into a dedicated GitHub repository. Public repositories can be used as
+human-readable data dashboards or as encrypted object stores.
 
-## Why
+```text
+Express / Prisma / pg
+        |
+        | postgresql://127.0.0.1:7432/main
+        v
+GitDB PostgreSQL facade
+        |
+        | SQL engine + local WAL/cache
+        v
+GitHub repository
+```
 
-GitHub is already where many small teams manage source, review changes, branch,
-audit history, and collaborate. GitDB explores a simple idea: for project-scale
-apps, can a repository also be the durable, reviewable data layer?
+GitDB is not SQLite-over-GitHub, and it does not upload `.db` files. The GitHub
+repository is the durable database store.
 
-The answer is yes for human-readable public datasets, demos, agent state,
-content tools, project metadata, and low-frequency app data. It is not a
-replacement for high-throughput OLTP databases.
+## Why GitDB
+
+GitHub already gives small teams commits, pull requests, history, branching,
+review, public visibility, private repos, and access control. GitDB uses those
+primitives for project data.
+
+Use it when you want:
+
+- A database repository per project, for example `my-app-db`
+- SQL and ORM access without writing custom Prisma, TypeORM, Drizzle, or Kysely
+  providers
+- Public data that can be inspected and edited from GitHub's web UI
+- Encrypted data in public or private repositories
+- Auditable commits for agent memory, demos, content tools, config tools, and
+  low-frequency app data
+
+Do not use it when you need high-throughput OLTP, low-latency multi-writer
+transactions, or full PostgreSQL compatibility today.
 
 ## Features
 
-- PostgreSQL-compatible TCP endpoint: `postgresql://localhost:7432/main`
-- ORM-friendly facade for Prisma, TypeORM, Drizzle, and Kysely PostgreSQL modes
-- SQL support for `CREATE TABLE`, `INSERT`, `SELECT`, `JOIN`, `GROUP BY`,
-  `ORDER BY`, and aggregate queries through the current engine
-- One GitHub database repository per app or project
-- Public plaintext mode with Firebase-style `table/schema.json` and
-  `table/data.json`
-- Encrypted mode for public or private repositories
-- Local encrypted and plaintext stores for development and tests
-- Public repository safe by default when `GITDB_KEY` is kept outside the repo
+| Area | Current behavior |
+| --- | --- |
+| ORM access | PostgreSQL-style local endpoint, so existing PostgreSQL clients can connect |
+| SQL | `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT`, joins, grouping, ordering, aggregates, and common raw-query flows |
+| GitHub storage | Dedicated repository per database, created on first write when permissions allow |
+| Public plaintext mode | `table/schema.json` and `table/data.json` are visible and editable in GitHub |
+| Encrypted mode | AES-256-GCM encrypted manifest and mutation log files |
+| Local mode | No GitHub variables required; data stays under a local root directory |
+| Example app | Express + Prisma API using GitDB through the PostgreSQL facade |
+| Benchmarks | Local, facade, and GitHub Contents API benchmark commands included |
 
-## What It Is Not
+## Repository Layout
 
-- Not SQLite-over-GitHub
-- Not a `.db` file uploader
-- Not a GitHub API call per query
-- Not a replacement for Postgres, MySQL, or SQLite in high-write OLTP systems
-- Not a PostgreSQL-compatible database engine yet; it implements the subset
-  needed for current ORM experiments
-
-## Quick Start
-
-```bash
-pnpm install
-pnpm build
-export GITDB_KEY="$(node dist/src/cli/main.js keygen)"
-pnpm start
-```
-
-In another terminal:
-
-```bash
-psql postgresql://127.0.0.1:7432/main
-```
-
-Or use any PostgreSQL ORM config:
+In plaintext public mode, GitDB writes both internal state and human-facing table
+snapshots:
 
 ```text
-DATABASE_URL=postgresql://127.0.0.1:7432/main
+gitdb/v1/
+  manifest.json
+  people/
+    schema.json
+    data.json
+  teams/
+    schema.json
+    data.json
+  log/
+    00000000000000000001.json
 ```
 
-## Storage Layout
-
-Encrypted mode stores opaque files:
-
-```text
-gitdb/v1/manifest.enc
-gitdb/v1/log/00000000000000000001.enc
-```
-
-Plaintext mode stores both an internal mutation log and a human-facing table
-view:
-
-```text
-gitdb/v1/manifest.json
-gitdb/v1/people/schema.json
-gitdb/v1/people/data.json
-gitdb/v1/teams/schema.json
-gitdb/v1/teams/data.json
-gitdb/v1/log/00000000000000000001.json
-```
-
-`schema.json` contains table structure:
+`schema.json` contains only schema:
 
 ```json
 {
-  "columns": ["id", "name", "team_id"],
-  "name": "people"
+  "name": "people",
+  "columns": ["id", "name", "team_id"]
 }
 ```
 
@@ -103,82 +92,60 @@ gitdb/v1/log/00000000000000000001.json
 ]
 ```
 
-You can edit `data.json` in GitHub, commit it, and the next GitDB process
-opening that prefix will restore from the visible table snapshots.
+That means a public database repository can be browsed like a lightweight
+Firebase-style data console. Editing `data.json` in GitHub and committing the
+change updates the visible table snapshot that GitDB restores on the next open.
 
-## Facade Environment
+In encrypted mode, GitDB writes opaque files:
 
-The root `.env.example` is only for running the GitDB PostgreSQL facade itself.
-It should not contain application or example database-repository settings.
+```text
+gitdb/v1/
+  manifest.enc
+  log/
+    00000000000000000001.enc
+```
+
+## Quick Start
+
+Install and build:
 
 ```bash
-cp .env.example .env
+pnpm install
 pnpm build
-node dist/src/cli/main.js keygen
 ```
 
-`GITDB_KEY` is not an arbitrary password. It must be a base64url-encoded
-32-byte key. Use `gitdb keygen` or `node dist/src/cli/main.js keygen` and keep
-that exact value outside Git. If the key changes, previously encrypted data
-cannot be decrypted.
-
-Set `GITDB_ENCRYPTION=off` only when you intentionally want plaintext demo
-files in a public repository. In that mode `GITDB_KEY` is not required and
-GitDB writes `manifest.json` plus log JSON files instead of encrypted `.enc`
-files.
-
-The root `.env.example` only includes:
-
-```env
-GITDB_ENCRYPTION=on
-GITDB_KEY=generated-by-gitdb-keygen
-GITDB_ROOT=.gitdb
-GITDB_HOST=0.0.0.0
-GITDB_PORT=7432
-```
-
-## GitHub Storage
-
-Set GitHub storage variables in the process that runs the facade when you want
-that facade to persist into a GitHub database repository:
+Run the local PostgreSQL facade with encrypted local storage:
 
 ```bash
 export GITDB_KEY="$(node dist/src/cli/main.js keygen)"
-export GITDB_GITHUB_OWNER="3x-haust"
-export GITDB_GITHUB_REPO="my-project-db"
-export GITDB_GITHUB_BRANCH="main"
-export GITDB_GITHUB_TOKEN="github_pat_... or ghp_..."
-gitdb serve
+pnpm start:facade
 ```
 
-Without `GITDB_GITHUB_*`, GitDB uses `.gitdb/gitdb/v1` locally.
+Connect with `psql`, `pg`, Prisma, or another PostgreSQL client:
 
-Use a dedicated repository as the database for each project. For example, an
-app can live in `my-project` while its GitDB data lives in `my-project-db`.
-That database repository can be public or private. If it is public, keep
-`GITDB_ENCRYPTION=on` for real data, or use `GITDB_ENCRYPTION=off` only for
-intentional plaintext demos.
+```bash
+psql postgresql://127.0.0.1:7432/main
+```
 
-`GITDB_GITHUB_TOKEN` can be either a fine-grained personal access token such as
-`github_pat_...` or a classic token such as `ghp_...`. Prefer a fine-grained
-token restricted to the target repository with read/write `Contents`
-permission. The token is only for pushing encrypted GitDB objects; never commit
-it to the repository.
+Example SQL:
 
-If the target repository does not exist, GitDB creates it as a public database
-repository on the first write. The token therefore needs repository creation
-permission for the owner. If the owner is an organization, the token user must
-be allowed to create repositories in that organization. For a fine-grained
-token, also grant access to the dedicated database repository after it exists,
-not only the source-code repository.
+```sql
+CREATE TABLE teams (id STRING, name STRING);
+CREATE TABLE people (id STRING, name STRING, team_id STRING);
+
+INSERT INTO teams VALUES ('t1', 'Storage');
+INSERT INTO people VALUES ('p1', 'Lin', 't1');
+
+SELECT people.name, teams.name AS team
+FROM people
+JOIN teams ON people.team_id = teams.id;
+```
 
 ## Express + Prisma Example
 
-This example shows the shape of a real API service. Express serves HTTP routes,
-Prisma connects to GitDB through the PostgreSQL facade, and GitDB persists to
-the dedicated database repository configured by `examples/express-prisma/.env`.
-The example has its own environment file because app/database-repository
-settings should not live in the root facade `.env`.
+The example is a real API shape: Express handles HTTP routes, Prisma talks to
+GitDB through the PostgreSQL facade, and GitDB stores the data locally or in the
+GitHub database repository configured by the example `.env`.
 
 ```bash
 cp examples/express-prisma/.env.example examples/express-prisma/.env
@@ -193,32 +160,110 @@ curl -X POST http://127.0.0.1:3090/seed
 curl http://127.0.0.1:3090/people
 ```
 
-The example `.env` defaults to `GITDB_ENCRYPTION=off` so public GitHub storage
-is human-readable for inspection. It points at the dedicated public database
-repo `3x-haust/gitdb-example-db`, not this source-code repository. Add
-`GITDB_GITHUB_TOKEN` to make it write there. Leave the token empty to run the
-same API against local plaintext files under `.gitdb-example-public`.
+By default the example uses plaintext mode:
 
-For GitHub-backed example mode, GitDB creates public repo
-`3x-haust/gitdb-example-db` if it does not exist. The token must be allowed to
-create repositories under `3x-haust`; after the repo exists, it must be able to
-write contents there. If startup fails while writing `gitdb/v1/manifest.json`,
-the token probably cannot create or access that database repository, or the
-branch name is wrong.
+```env
+GITDB_ENCRYPTION=off
+GITDB_ROOT=.gitdb-example-public
+GITDB_GITHUB_OWNER=3x-haust
+GITDB_GITHUB_REPO=gitdb-example-db
+GITDB_GITHUB_BRANCH=main
+GITDB_GITHUB_PREFIX=gitdb/v1
+GITDB_GITHUB_TOKEN=
+API_PORT=3090
+```
 
-Because the example intentionally runs in plaintext mode, its `.env.example`
-does not include `GITDB_KEY`.
+Leave `GITDB_GITHUB_TOKEN` empty to test against local files. Add a GitHub token
+to write to the dedicated public database repository. The token needs Contents
+read/write access to that database repository. If the repository does not exist,
+the token also needs permission to create repositories for the owner.
+
+## Environment Model
+
+The root `.env` is for the GitDB facade process:
+
+```env
+GITDB_ENCRYPTION=on
+GITDB_KEY=generated-by-gitdb-keygen
+GITDB_ROOT=.gitdb
+GITDB_HOST=0.0.0.0
+GITDB_PORT=7432
+```
+
+Application examples keep their own `.env` files because application settings
+and database-repository settings should not leak into the package root.
+
+### Encryption
+
+`GITDB_KEY` must be a base64url-encoded 32-byte key generated by GitDB:
+
+```bash
+node dist/src/cli/main.js keygen
+```
+
+Keep it outside Git. If the key changes, previously encrypted data cannot be
+decrypted.
+
+Use `GITDB_ENCRYPTION=off` only for intentional public demos where table names,
+columns, and rows should be visible in GitHub.
+
+### GitHub Storage
+
+Set these variables in the process that runs the facade:
+
+```bash
+export GITDB_GITHUB_OWNER="3x-haust"
+export GITDB_GITHUB_REPO="my-project-db"
+export GITDB_GITHUB_BRANCH="main"
+export GITDB_GITHUB_PREFIX="gitdb/v1"
+export GITDB_GITHUB_TOKEN="github_pat_... or ghp_..."
+gitdb serve
+```
+
+Recommended pattern:
+
+- Source repo: `my-project`
+- Database repo: `my-project-db`
+- Public demo data: `GITDB_ENCRYPTION=off`
+- Real public or private data: `GITDB_ENCRYPTION=on`
+
+## Architecture
+
+GitDB is split into three layers:
+
+1. PostgreSQL-compatible facade
+   - Opens a local TCP endpoint.
+   - Lets existing clients use a normal PostgreSQL connection string.
+   - Avoids ORM-specific driver/provider work.
+
+2. SQL engine
+   - Owns schema, mutation execution, query execution, joins, grouping, and
+     result rows.
+   - Targets the PostgreSQL subset produced by common Node.js clients and ORM
+     raw-query flows.
+
+3. Storage providers
+   - Local encrypted store for development and tests.
+   - Local plaintext store for visible snapshots.
+   - GitHub encrypted/plaintext stores for remote durability.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for more detail.
 
 ## Benchmarks
 
-Run:
+Run local benchmarks:
 
 ```bash
 pnpm benchmark
-GITDB_BENCH_GITHUB_ROWS=4 pnpm benchmark:github
 ```
 
-Latest local run:
+Run the GitHub write benchmark:
+
+```bash
+GITDB_BENCH_GITHUB_ROWS=2 pnpm benchmark:github
+```
+
+Latest measured run:
 
 | Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -227,76 +272,108 @@ Latest local run:
 | postgres facade over local encrypted | 250 | 987.93 | 253.05 | 19.74 | 0.00 |
 | github plaintext contents api | 2 | 14157.49 | 0.14 | 6.70 | 1812.62 |
 
-See [docs/BENCHMARKS.md](docs/BENCHMARKS.md) for interpretation and the
-performance plan.
+Interpretation: local execution is already usable for development and
+low-frequency workloads. Direct per-mutation GitHub Contents API writes are too
+slow for the hot path. GitHub should be the durable sync layer, while local WAL,
+cache, indexes, and batched commits handle live query/write performance.
 
-The key result: local query/write performance is acceptable for experiments,
-but direct per-mutation GitHub Contents API writes are too slow and can hit
-transient GitHub 5xx responses under bursts. The production path is local WAL
-plus batched Git commits.
-
-## Security Model
-
-For public repositories, keep encryption enabled and never commit `GITDB_KEY`.
-GitDB encrypts manifest and mutation segments with AES-256-GCM. Logical names
-are not required in GitHub paths; provider storage can use opaque HMAC paths as
-the storage layer evolves.
-
-Public GitHub can still reveal metadata such as commit timing, file count, and
-approximate file size. Use batch writes, padding, and compaction for workloads
-where metadata leakage matters.
+See [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
 ## Performance Roadmap
 
+The next performance work is storage-shaped, not facade-shaped:
+
 - Local WAL first: return success after local durable write in `fast` mode
-- Git Database tree commits: batch many file updates into one Git commit
-- Snapshot throttling: do not rewrite visible `data.json` after every mutation
-- Chunked rows/pages: avoid rewriting a whole table for one row change
-- Local indexes: keep joins and filters off the GitHub hot path
-- Manifest versions: skip unchanged tables on cold start
-- Strong mode: block until GitHub commit for workflows that need remote
-  durability before returning
+- Batched Git commits: replace repeated Contents API writes with Git Database
+  tree commits
+- Snapshot throttling: refresh visible `data.json` on intervals or explicit
+  sync, not every mutation
+- Chunked table pages: avoid rewriting a whole table for one row change
+- Local primary and secondary indexes: keep joins and filters off the GitHub hot
+  path
+- Manifest versions: skip unchanged table reads on cold start
+- Strong mode: optionally block until the GitHub commit lands
+
+## Security Model
+
+Encrypted mode protects manifest and mutation log contents with AES-256-GCM.
+Keys are never stored in the repository.
+
+Public GitHub repositories can still reveal metadata:
+
+- Commit time
+- File count
+- Approximate file size
+- Write frequency
+
+Mitigations include batching, padding, compaction, and opaque paths in future
+storage versions.
+
+## Current Limitations
+
+- SQL support is intentionally limited to the subset GitDB currently executes.
+- PostgreSQL catalog emulation is not complete.
+- Multi-process writers are guarded by GitHub state, but this is not yet a
+  high-concurrency OLTP database.
+- GitHub Contents API mode is useful for demos and correctness testing, not
+  production write throughput.
+- Public plaintext mode is intentionally not private.
+
+Unsupported SQL should fail explicitly instead of pretending to work.
 
 ## Prior Art
 
-GitDB borrows README and product-shape lessons from projects around this space:
+GitDB's README and product shape were informed by established open-source
+database and backend projects:
 
-- [Dolt](https://github.com/dolthub/dolt): SQL database with Git-style version
-  control, a crisp "Git for Data" positioning.
-- [Supabase](https://github.com/supabase/supabase): Firebase-like developer
-  experience built around Postgres and open-source components.
-- [Nhost](https://github.com/nhost/nhost): open-source Firebase alternative
-  with GraphQL and SQL in the first screen.
+- [Dolt](https://github.com/dolthub/dolt): crisp "Git for Data" positioning and
+  SQL plus Git-style collaboration.
+- [Supabase](https://github.com/supabase/supabase): open-source Firebase-style
+  developer experience built around Postgres.
+- [Nhost](https://github.com/nhost/nhost): short first-screen positioning,
+  quickstart links, and SQL-backed Firebase alternative framing.
 - [PocketBase](https://github.com/pocketbase/pocketbase): small, inspectable
-  backend with database, realtime, auth, and admin UI.
-- [Appwrite](https://github.com/appwrite/appwrite): all-in-one backend platform
-  with clear product surface and self-hosting story.
+  backend surface with a direct feature list.
+- [Appwrite](https://github.com/appwrite/appwrite): product-oriented README
+  structure with installation, self-hosting, and community paths.
+- [Prisma](https://github.com/prisma/prisma), [Drizzle](https://github.com/drizzle-team/drizzle-orm),
+  and [Kysely](https://github.com/kysely-org/kysely): the reason GitDB exposes a
+  PostgreSQL facade instead of asking ORMs to accept a new provider.
 
-## Release Commands
+## Commands
 
 ```bash
 pnpm check
 pnpm test
 pnpm build
+pnpm benchmark
+pnpm start:facade
+pnpm example
 ```
 
 ## Deployment
 
-The service is a long-running HTTP control plane plus PostgreSQL-compatible TCP
-facade. Build and run it with:
+The deployable service is a NestJS HTTP control plane plus the
+PostgreSQL-compatible facade in the same process:
 
 ```bash
 docker build -t gitdb .
 docker run -p 3000:3000 -p 7432:7432 --env-file .env gitdb
 ```
 
-`pnpm start` runs the deployable NestJS control plane and starts the PostgreSQL
-facade in the same process. `pnpm start:facade` runs only the TCP facade for
-local ORM testing.
+`pnpm start` runs the HTTP control plane. `pnpm start:facade` runs only the TCP
+facade for local ORM testing.
 
-The public control-plane deployment is available at
-`https://gitdb.3xhaust.dev/health`. It reports the facade bind target and
-storage mode. The `@3xhaust/deploy-cli` HTTP ingress exposes the control plane;
-external ORM access to the TCP facade requires a deploy target that exposes TCP
-port `7432`, or a local `gitdb serve` process pointed at the same GitHub-backed
-repository.
+The current public HTTP control plane is deployed at:
+
+```text
+https://gitdb.3xhaust.dev/health
+```
+
+HTTP deployment does not automatically expose the TCP facade to external ORM
+clients. For remote ORM access, run `gitdb serve` near the application or deploy
+to an environment that exposes TCP port `7432`.
+
+## License
+
+MIT
