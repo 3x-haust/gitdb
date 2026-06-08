@@ -14,9 +14,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "biome check . && tsc --noEmit",
-    "example": "pnpm example:quickstart",
+    "example": "pnpm example:express-prisma",
     "example:express-prisma": "pnpm build && pnpm exec prisma generate --schema examples/express-prisma/schema.prisma && node examples/express-prisma/server.mjs",
-    "example:quickstart": "pnpm build && node dist/examples/quickstart.js",
     "format": "biome check --write .",
     "test": "vitest run",
     "test:e2e": "vitest run tests/e2e.test.ts",

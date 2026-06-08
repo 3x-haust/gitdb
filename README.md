@@ -41,22 +41,10 @@ Or use any PostgreSQL ORM config:
 DATABASE_URL=postgresql://token@127.0.0.1:7432/main
 ```
 
-## Try The Example
+## Facade Environment
 
-Run the packaged quickstart example without a GitHub token:
-
-```bash
-pnpm example
-```
-
-The example starts a temporary encrypted GitDB store, opens the PostgreSQL
-facade on a random local port, connects with the normal `pg` PostgreSQL client,
-creates two tables, inserts rows, and runs a `JOIN ... ORDER BY` query.
-
-## Environment
-
-Create a local `.env` from `.env.example` when you want to run the facade with
-persistent local or GitHub-backed storage:
+The root `.env.example` is only for running the GitDB PostgreSQL facade itself.
+It should not contain application or example database-repository settings.
 
 ```bash
 cp .env.example .env
@@ -74,19 +62,20 @@ files in a public repository. In that mode `GITDB_KEY` is not required and
 GitDB writes `manifest.json` plus log JSON files instead of encrypted `.enc`
 files.
 
-For local-only testing, only these values are required:
+The root `.env.example` only includes:
 
 ```env
-GITDB_KEY=generated-by-gitdb-keygen
 GITDB_ENCRYPTION=on
+GITDB_KEY=generated-by-gitdb-keygen
 GITDB_ROOT=.gitdb
-GITDB_HOST=127.0.0.1
+GITDB_HOST=0.0.0.0
 GITDB_PORT=7432
 ```
 
 ## GitHub Storage
 
-Set these variables to persist encrypted GitDB files to a GitHub repository:
+Set GitHub storage variables in the process that runs the facade when you want
+that facade to persist into a GitHub database repository:
 
 ```bash
 export GITDB_KEY="$(node dist/src/cli/main.js keygen)"
@@ -115,11 +104,13 @@ it to the repository.
 
 This example shows the shape of a real API service. Express serves HTTP routes,
 Prisma connects to GitDB through the PostgreSQL facade, and GitDB persists to
-the store configured by `examples/express-prisma/.env`.
+the dedicated database repository configured by `examples/express-prisma/.env`.
+The example has its own environment file because app/database-repository
+settings should not live in the root facade `.env`.
 
 ```bash
 cp examples/express-prisma/.env.example examples/express-prisma/.env
-pnpm example:express-prisma
+pnpm example
 ```
 
 In another terminal:
@@ -135,6 +126,9 @@ is human-readable for inspection. It points at the dedicated public database
 repo `3x-haust/gitdb-example-db`, not this source-code repository. Add
 `GITDB_GITHUB_TOKEN` to make it write there. Leave the token empty to run the
 same API against local plaintext files under `.gitdb-example-public`.
+
+Because the example intentionally runs in plaintext mode, its `.env.example`
+does not include `GITDB_KEY`.
 
 ## Security Model
 

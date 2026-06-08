@@ -44,6 +44,7 @@
       "!dist",
       "!coverage",
       "!.gitdb-example-public",
+      "!.omx",
       "!examples/express-prisma/generated"
     ]
   },
