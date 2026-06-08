@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { afterEach, describe, expect, it } from "vitest"
@@ -35,5 +35,27 @@ describe("plaintext store", () => {
     expect(manifest).toContain("00000000000000000002")
     expect(mutation).toContain("INSERT INTO teams")
     expect(mutation).toContain("Storage")
+  })
+
+  it("writes table snapshots that can be edited like public GitHub data", async () => {
+    // Given: a plaintext GitDB store used for public data inspection.
+    const root = await mkdtemp(join(tmpdir(), "gitdb-visible-"))
+    roots.push(root)
+    const store = new LocalPlaintextStore({ root })
+    const first = await GitDbEngine.open({ store })
+
+    // When: a table is created and later edited through the visible snapshot file.
+    await first.execute("CREATE TABLE people (id STRING, name STRING)")
+    await first.execute("INSERT INTO people VALUES ('p1', 'Lin')")
+    const dataPath = join(root, "gitdb/v1/people/data.json")
+    const visibleData = await readFile(dataPath, "utf8")
+    await writeFile(dataPath, visibleData.replace('"Lin"', '"Ada"'), "utf8")
+    const second = await GitDbEngine.open({ store })
+    const result = await second.execute("SELECT name FROM people WHERE id = 'p1'")
+
+    // Then: the visible table file is human-readable and drives the reopened DB state.
+    expect(visibleData).toContain('"people"')
+    expect(visibleData).toContain('"Lin"')
+    expect(result.rows).toEqual([{ name: "Ada" }])
   })
 })

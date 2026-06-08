@@ -1,10 +1,16 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { GitDbStorageError } from "../errors.js"
-import type { GitDbManifest, PersistedMutation, SegmentId } from "../types.js"
+import type {
+  GitDbManifest,
+  PersistedMutation,
+  SegmentId,
+  VisibleDatabaseSnapshot,
+} from "../types.js"
 import {
   parsePlaintextManifest,
   parsePlaintextMutation,
+  parseVisibleTableSnapshot,
   segmentIdForSequence,
   stringifyPlaintext,
 } from "./plaintext-codec.js"
@@ -48,9 +54,46 @@ export class LocalPlaintextStore implements GitDbStore {
     return mutations
   }
 
+  async readVisibleSnapshot(): Promise<VisibleDatabaseSnapshot | null> {
+    const tableNames = await this.#readDirectoryNames()
+    const tables = []
+    for (const tableName of tableNames) {
+      const payload = await this.#readNullable(join(this.#root, tableName, "data.json"))
+      if (payload !== null) {
+        tables.push(parseVisibleTableSnapshot(payload))
+      }
+    }
+    return tables.length === 0 ? null : { tables }
+  }
+
+  async writeVisibleSnapshot(snapshot: VisibleDatabaseSnapshot): Promise<void> {
+    for (const table of snapshot.tables) {
+      await this.#writeJson(join(this.#root, table.name, "schema.json"), {
+        columns: table.columns,
+        name: table.name,
+      })
+      await this.#writeJson(join(this.#root, table.name, "data.json"), table)
+    }
+  }
+
   async #writeJson(path: string, value: unknown): Promise<void> {
     await mkdir(dirname(path), { recursive: true })
     await writeFile(path, stringifyPlaintext(value), "utf8")
+  }
+
+  async #readDirectoryNames(): Promise<readonly string[]> {
+    try {
+      const entries = await readdir(this.#root, { withFileTypes: true })
+      return entries
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .filter((name) => name !== "log")
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+        return []
+      }
+      throw error
+    }
   }
 
   async #readNullable(path: string): Promise<string | null> {

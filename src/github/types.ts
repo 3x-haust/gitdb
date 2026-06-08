@@ -16,3 +16,8 @@ export const GitHubFileSchema = z.object({
 })
 
 export type GitHubFile = z.infer<typeof GitHubFileSchema>
+
+export const GitHubDirectoryEntrySchema = z.object({
+  name: z.string(),
+  type: z.string(),
+})

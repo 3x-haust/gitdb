@@ -3,12 +3,20 @@ import { GitDbStorageError } from "../errors.js"
 import {
   parsePlaintextManifest,
   parsePlaintextMutation,
+  parseVisibleTableSnapshot,
   segmentIdForSequence,
   stringifyPlaintext,
 } from "../storage/plaintext-codec.js"
 import type { GitDbStore } from "../storage/store.js"
-import type { GitDbManifest, PersistedMutation, SegmentId } from "../types.js"
-import { type GitHubConfig, GitHubFileSchema } from "./types.js"
+import type {
+  GitDbManifest,
+  PersistedMutation,
+  SegmentId,
+  VisibleDatabaseSnapshot,
+} from "../types.js"
+import { gitHubWriteError, isGitHubConflict, isGitHubNotFound } from "./errors.js"
+import { ensureGitHubRepository } from "./repository.js"
+import { type GitHubConfig, GitHubDirectoryEntrySchema, GitHubFileSchema } from "./types.js"
 
 type WriteFileInput = {
   readonly path: string
@@ -60,6 +68,61 @@ export class GitHubPlaintextStore implements GitDbStore {
     return mutations
   }
 
+  async readVisibleSnapshot(): Promise<VisibleDatabaseSnapshot | null> {
+    const tableNames = await this.#readTableNames()
+    const tables = []
+    for (const tableName of tableNames) {
+      const payload = await this.#readNullable(`${this.#config.prefix}/${tableName}/data.json`)
+      if (payload !== null) {
+        tables.push(parseVisibleTableSnapshot(payload))
+      }
+    }
+    return tables.length === 0 ? null : { tables }
+  }
+
+  async writeVisibleSnapshot(snapshot: VisibleDatabaseSnapshot): Promise<void> {
+    for (const table of snapshot.tables) {
+      await this.#writeFile({
+        message: `gitdb sync ${table.name} schema`,
+        path: `${this.#config.prefix}/${table.name}/schema.json`,
+        plaintext: {
+          columns: table.columns,
+          name: table.name,
+        },
+      })
+      await this.#writeFile({
+        message: `gitdb sync ${table.name} data`,
+        path: `${this.#config.prefix}/${table.name}/data.json`,
+        plaintext: table,
+      })
+    }
+  }
+
+  async #readTableNames(): Promise<readonly string[]> {
+    try {
+      const response = await this.#octokit.repos.getContent({
+        owner: this.#config.owner,
+        path: this.#config.prefix,
+        ref: this.#config.branch,
+        repo: this.#config.repo,
+      })
+      if (!Array.isArray(response.data)) {
+        return []
+      }
+      return response.data
+        .map((entry) => GitHubDirectoryEntrySchema.safeParse(entry))
+        .filter((entry) => entry.success)
+        .map((entry) => entry.data)
+        .filter((entry) => entry.type === "dir" && entry.name !== "log")
+        .map((entry) => entry.name)
+    } catch (error) {
+      if (isGitHubNotFound(error)) {
+        return []
+      }
+      throw error
+    }
+  }
+
   async #readNullable(path: string): Promise<string | null> {
     try {
       const response = await this.#octokit.repos.getContent({
@@ -82,8 +145,35 @@ export class GitHubPlaintextStore implements GitDbStore {
   }
 
   async #writeFile(input: WriteFileInput): Promise<void> {
-    const existing = await this.#getExistingSha(input.path)
-    const request = {
+    let repositoryBootstrapped = false
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const existing = await this.#getExistingSha(input.path)
+      const request = this.#writeRequest(input, existing)
+      try {
+        await this.#octokit.repos.createOrUpdateFileContents(request)
+        return
+      } catch (error) {
+        if (isGitHubNotFound(error) && !repositoryBootstrapped) {
+          await ensureGitHubRepository(this.#octokit, this.#config)
+          repositoryBootstrapped = true
+          continue
+        }
+        if (isGitHubConflict(error)) {
+          continue
+        }
+        throw this.#writeError(input.path, error)
+      }
+    }
+    throw new GitDbStorageError(
+      `GitHub write conflict did not settle for ${this.#config.owner}/${this.#config.repo}@${this.#config.branch}:${input.path}`,
+    )
+  }
+
+  #writeRequest(
+    input: WriteFileInput,
+    existing: string | null,
+  ): Parameters<Octokit["repos"]["createOrUpdateFileContents"]>[0] {
+    return {
       branch: this.#config.branch,
       content: Buffer.from(stringifyPlaintext(input.plaintext), "utf8").toString("base64"),
       message: input.message,
@@ -92,7 +182,11 @@ export class GitHubPlaintextStore implements GitDbStore {
       repo: this.#config.repo,
       ...(existing === null ? {} : { sha: existing }),
     }
-    await this.#octokit.repos.createOrUpdateFileContents(request)
+  }
+
+  #writeError(path: string, error: unknown): unknown {
+    const writeError = gitHubWriteError(this.#config, path, error)
+    return writeError ?? error
   }
 
   async #getExistingSha(path: string): Promise<string | null> {
@@ -115,13 +209,4 @@ export class GitHubPlaintextStore implements GitDbStore {
       throw error
     }
   }
-}
-
-function isGitHubNotFound(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "status" in error &&
-    typeof error.status === "number" &&
-    error.status === 404
-  )
 }

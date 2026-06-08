@@ -10,6 +10,16 @@ export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: 
 
 export type SqlRow = Readonly<Record<string, JsonPrimitive>>
 
+export type VisibleTableSnapshot = {
+  readonly name: string
+  readonly columns: readonly string[]
+  readonly rows: readonly SqlRow[]
+}
+
+export type VisibleDatabaseSnapshot = {
+  readonly tables: readonly VisibleTableSnapshot[]
+}
+
 export type SqlResult = {
   readonly rows: readonly SqlRow[]
   readonly command: string

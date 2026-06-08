@@ -100,6 +100,13 @@ token restricted to the target repository with read/write `Contents`
 permission. The token is only for pushing encrypted GitDB objects; never commit
 it to the repository.
 
+If the target repository does not exist, GitDB creates it as a public database
+repository on the first write. The token therefore needs repository creation
+permission for the owner. If the owner is an organization, the token user must
+be allowed to create repositories in that organization. For a fine-grained
+token, also grant access to the dedicated database repository after it exists,
+not only the source-code repository.
+
 ## Express + Prisma Example
 
 This example shows the shape of a real API service. Express serves HTTP routes,
@@ -126,6 +133,29 @@ is human-readable for inspection. It points at the dedicated public database
 repo `3x-haust/gitdb-example-db`, not this source-code repository. Add
 `GITDB_GITHUB_TOKEN` to make it write there. Leave the token empty to run the
 same API against local plaintext files under `.gitdb-example-public`.
+
+In plaintext GitHub mode, GitDB writes Firebase-style table snapshots alongside
+the internal mutation log. After seeding, the public database repo contains
+files such as:
+
+```text
+gitdb/v1/people/schema.json
+gitdb/v1/people/data.json
+gitdb/v1/teams/schema.json
+gitdb/v1/teams/data.json
+gitdb/v1/log/00000000000000000001.json
+```
+
+The `data.json` files are the human-facing public data view. You can inspect
+and edit them in GitHub's web UI, commit the change, and the next GitDB process
+opening that prefix will restore from those visible table snapshots.
+
+For GitHub-backed example mode, GitDB creates public repo
+`3x-haust/gitdb-example-db` if it does not exist. The token must be allowed to
+create repositories under `3x-haust`; after the repo exists, it must be able to
+write contents there. If startup fails while writing `gitdb/v1/manifest.json`,
+the token probably cannot create or access that database repository, or the
+branch name is wrong.
 
 Because the example intentionally runs in plaintext mode, its `.env.example`
 does not include `GITDB_KEY`.

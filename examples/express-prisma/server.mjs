@@ -11,10 +11,11 @@ loadEnv({ path: new URL(".env", import.meta.url), processEnv: envFile })
 
 const env = {
   ...envFile,
-  GITDB_ENCRYPTION: envFile.GITDB_ENCRYPTION ?? "off",
-  GITDB_HOST: envFile.GITDB_HOST ?? "127.0.0.1",
-  GITDB_PORT: envFile.GITDB_PORT ?? "0",
-  GITDB_ROOT: envFile.GITDB_ROOT ?? ".gitdb-example-public",
+  ...process.env,
+  GITDB_ENCRYPTION: process.env.GITDB_ENCRYPTION ?? envFile.GITDB_ENCRYPTION ?? "off",
+  GITDB_HOST: process.env.GITDB_HOST ?? envFile.GITDB_HOST ?? "127.0.0.1",
+  GITDB_PORT: process.env.GITDB_PORT ?? envFile.GITDB_PORT ?? "0",
+  GITDB_ROOT: process.env.GITDB_ROOT ?? envFile.GITDB_ROOT ?? ".gitdb-example-public",
 }
 
 const { mode, store } = createStoreFromEnv(env)
@@ -31,7 +32,7 @@ const prisma = new PrismaClient({
   adapter,
 })
 const app = express()
-const apiPort = Number.parseInt(envFile.API_PORT ?? "3090", 10)
+const apiPort = Number.parseInt(process.env.API_PORT ?? envFile.API_PORT ?? "3090", 10)
 
 app.use(express.json())
 
@@ -68,8 +69,8 @@ const httpServer = app.listen(apiPort, "127.0.0.1", () => {
   process.stdout.write(`Express API: http://127.0.0.1:${apiPort}\n`)
   process.stdout.write(`GitDB facade: ${databaseUrl}\n`)
   process.stdout.write(`GitDB mode: ${mode}\n`)
-  process.stdout.write("Try: curl -X POST http://127.0.0.1:3090/seed\n")
-  process.stdout.write("Try: curl http://127.0.0.1:3090/people\n")
+  process.stdout.write(`Try: curl -X POST http://127.0.0.1:${apiPort}/seed\n`)
+  process.stdout.write(`Try: curl http://127.0.0.1:${apiPort}/people\n`)
 })
 
 async function shutdown() {

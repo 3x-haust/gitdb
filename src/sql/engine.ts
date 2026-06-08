@@ -1,7 +1,13 @@
 import alasql from "alasql"
+import { z } from "zod"
 import { SqlExecutionError } from "../errors.js"
 import type { GitDbStore } from "../storage/store.js"
-import type { GitDbManifest, PersistedMutation, SqlResult } from "../types.js"
+import type {
+  GitDbManifest,
+  PersistedMutation,
+  SqlResult,
+  VisibleDatabaseSnapshot,
+} from "../types.js"
 import { maybeCatalogResult } from "./catalog.js"
 import { commandTag, isMutation, isTransactionControl, normalizePostgresSql } from "./normalize.js"
 import { toRows } from "./rows.js"
@@ -9,6 +15,17 @@ import { toRows } from "./rows.js"
 type GitDbEngineOptions = {
   readonly store: GitDbStore
 }
+
+const AlaSqlColumnSchema = z.object({
+  columnid: z.string().min(1),
+})
+
+const AlaSqlTableSchema = z.object({
+  columns: z.array(AlaSqlColumnSchema),
+  data: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+})
+
+const AlaSqlTablesSchema = z.record(z.string(), AlaSqlTableSchema)
 
 export class GitDbEngine {
   readonly #db: InstanceType<typeof alasql.Database>
@@ -34,7 +51,10 @@ export class GitDbEngine {
         logSegments: [],
       } satisfies GitDbManifest)
     const engine = new GitDbEngine(options.store, manifest)
-    await engine.#replay()
+    const restoredSnapshot = await engine.#restoreVisibleSnapshot()
+    if (!restoredSnapshot) {
+      await engine.#replay()
+    }
     if (manifest.sequence === 0) {
       await options.store.writeManifest(manifest)
     }
@@ -56,8 +76,46 @@ export class GitDbEngine {
     const response = { command: commandTag(sql, rowCount), rowCount, rows } satisfies SqlResult
     if (isMutation(sql)) {
       await this.#persist(sql)
+      await this.#persistVisibleSnapshot()
     }
     return response
+  }
+
+  async #restoreVisibleSnapshot(): Promise<boolean> {
+    if (this.#store.readVisibleSnapshot === undefined) {
+      return false
+    }
+    const snapshot = await this.#store.readVisibleSnapshot()
+    if (snapshot === null) {
+      return false
+    }
+    for (const table of snapshot.tables) {
+      const columns = table.columns.map((column) => `${column} STRING`).join(", ")
+      this.#exec(`CREATE TABLE IF NOT EXISTS ${table.name} (${columns})`, `restore ${table.name}`)
+      for (const row of table.rows) {
+        const values = table.columns.map((column) => sqlLiteral(row[column] ?? null)).join(", ")
+        this.#exec(`INSERT INTO ${table.name} VALUES (${values})`, `restore ${table.name}`)
+      }
+    }
+    return true
+  }
+
+  async #persistVisibleSnapshot(): Promise<void> {
+    if (this.#store.writeVisibleSnapshot === undefined) {
+      return
+    }
+    await this.#store.writeVisibleSnapshot(this.#visibleSnapshot())
+  }
+
+  #visibleSnapshot(): VisibleDatabaseSnapshot {
+    const parsed = AlaSqlTablesSchema.parse(this.#db.tables)
+    return {
+      tables: Object.entries(parsed).map(([name, table]) => ({
+        columns: table.columns.map((column) => column.columnid),
+        name,
+        rows: table.data,
+      })),
+    }
   }
 
   async #replay(): Promise<void> {
@@ -89,4 +147,17 @@ export class GitDbEngine {
       throw new SqlExecutionError(originalSql, detail)
     }
   }
+}
+
+function sqlLiteral(value: string | number | boolean | null): string {
+  if (value === null) {
+    return "NULL"
+  }
+  if (typeof value === "number") {
+    return value.toString()
+  }
+  if (typeof value === "boolean") {
+    return value ? "TRUE" : "FALSE"
+  }
+  return `'${value.replaceAll("'", "''")}'`
 }

@@ -4,6 +4,8 @@ import type { Cipher } from "../crypto/aes-gcm.js"
 import { GitDbStorageError } from "../errors.js"
 import type { GitDbStore } from "../storage/store.js"
 import { type GitDbManifest, type PersistedMutation, type SegmentId, segmentId } from "../types.js"
+import { gitHubWriteError, isGitHubConflict, isGitHubNotFound } from "./errors.js"
+import { ensureGitHubRepository } from "./repository.js"
 import { type GitHubConfig, GitHubFileSchema } from "./types.js"
 
 const ManifestSchema = z.object({
@@ -101,9 +103,36 @@ export class GitHubEncryptedStore implements GitDbStore {
   }
 
   async #writeFile(input: WriteFileInput): Promise<void> {
-    const existing = await this.#getExistingSha(input.path)
+    let repositoryBootstrapped = false
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const existing = await this.#getExistingSha(input.path)
+      const request = this.#writeRequest(input, existing)
+      try {
+        await this.#octokit.repos.createOrUpdateFileContents(request)
+        return
+      } catch (error) {
+        if (isGitHubNotFound(error) && !repositoryBootstrapped) {
+          await ensureGitHubRepository(this.#octokit, this.#config)
+          repositoryBootstrapped = true
+          continue
+        }
+        if (isGitHubConflict(error)) {
+          continue
+        }
+        throw this.#writeError(input.path, error)
+      }
+    }
+    throw new GitDbStorageError(
+      `GitHub write conflict did not settle for ${this.#config.owner}/${this.#config.repo}@${this.#config.branch}:${input.path}`,
+    )
+  }
+
+  #writeRequest(
+    input: WriteFileInput,
+    existing: string | null,
+  ): Parameters<Octokit["repos"]["createOrUpdateFileContents"]>[0] {
     const sealed = this.#cipher.seal(Buffer.from(JSON.stringify(input.plaintext), "utf8"))
-    const request = {
+    return {
       branch: this.#config.branch,
       content: Buffer.from(sealed, "utf8").toString("base64"),
       message: input.message,
@@ -112,7 +141,11 @@ export class GitHubEncryptedStore implements GitDbStore {
       repo: this.#config.repo,
       ...(existing === null ? {} : { sha: existing }),
     }
-    await this.#octokit.repos.createOrUpdateFileContents(request)
+  }
+
+  #writeError(path: string, error: unknown): unknown {
+    const writeError = gitHubWriteError(this.#config, path, error)
+    return writeError ?? error
   }
 
   async #getExistingSha(path: string): Promise<string | null> {
@@ -135,13 +168,4 @@ export class GitHubEncryptedStore implements GitDbStore {
       throw error
     }
   }
-}
-
-function isGitHubNotFound(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "status" in error &&
-    typeof error.status === "number" &&
-    error.status === 404
-  )
 }
