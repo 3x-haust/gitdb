@@ -53,16 +53,41 @@ The example starts a temporary encrypted GitDB store, opens the PostgreSQL
 facade on a random local port, connects with the normal `pg` PostgreSQL client,
 creates two tables, inserts rows, and runs a `JOIN ... ORDER BY` query.
 
+## Environment
+
+Create a local `.env` from `.env.example` when you want to run the facade with
+persistent local or GitHub-backed storage:
+
+```bash
+cp .env.example .env
+pnpm build
+node dist/src/cli/main.js keygen
+```
+
+`GITDB_KEY` is not an arbitrary password. It must be a base64url-encoded
+32-byte key. Use `gitdb keygen` or `node dist/src/cli/main.js keygen` and keep
+that exact value outside Git. If the key changes, previously encrypted data
+cannot be decrypted.
+
+For local-only testing, only these values are required:
+
+```env
+GITDB_KEY=generated-by-gitdb-keygen
+GITDB_ROOT=.gitdb
+GITDB_HOST=127.0.0.1
+GITDB_PORT=7432
+```
+
 ## GitHub Storage
 
 Set these variables to persist encrypted GitDB files to a GitHub repository:
 
 ```bash
-export GITDB_KEY="base64url-32-byte-key"
+export GITDB_KEY="$(node dist/src/cli/main.js keygen)"
 export GITDB_GITHUB_OWNER="3x-haust"
 export GITDB_GITHUB_REPO="gitdb"
-export GITDB_GITHUB_TOKEN="ghp_or_fine_grained_token"
 export GITDB_GITHUB_BRANCH="data"
+export GITDB_GITHUB_TOKEN="github_pat_... or ghp_..."
 gitdb serve
 ```
 
@@ -71,6 +96,12 @@ Without `GITDB_GITHUB_*`, GitDB uses `.gitdb/gitdb/v1` locally.
 Use a dedicated data branch for public repositories. The released deployment
 uses `main` for application code and `data` for encrypted GitDB objects so data
 commits do not trigger application auto-deploys.
+
+`GITDB_GITHUB_TOKEN` can be either a fine-grained personal access token such as
+`github_pat_...` or a classic token such as `ghp_...`. Prefer a fine-grained
+token restricted to the target repository with read/write `Contents`
+permission. The token is only for pushing encrypted GitDB objects; never commit
+it to the repository.
 
 ## Security Model
 
