@@ -343,25 +343,6 @@ storage versions.
 
 Unsupported SQL should fail explicitly instead of pretending to work.
 
-## Prior Art
-
-GitDB's README and product shape were informed by established open-source
-database and backend projects:
-
-- [Dolt](https://github.com/dolthub/dolt): crisp "Git for Data" positioning and
-  SQL plus Git-style collaboration.
-- [Supabase](https://github.com/supabase/supabase): open-source Firebase-style
-  developer experience built around Postgres.
-- [Nhost](https://github.com/nhost/nhost): short first-screen positioning,
-  quickstart links, and SQL-backed Firebase alternative framing.
-- [PocketBase](https://github.com/pocketbase/pocketbase): small, inspectable
-  backend surface with a direct feature list.
-- [Appwrite](https://github.com/appwrite/appwrite): product-oriented README
-  structure with installation, self-hosting, and community paths.
-- [Prisma](https://github.com/prisma/prisma), [Drizzle](https://github.com/drizzle-team/drizzle-orm),
-  and [Kysely](https://github.com/kysely-org/kysely): the reason GitDB exposes a
-  PostgreSQL facade instead of asking ORMs to accept a new provider.
-
 ## Commands
 
 ```bash
