@@ -5,6 +5,7 @@ RUN corepack enable && corepack prepare pnpm@10.33.0 --activate && pnpm install 
 
 FROM deps AS build
 COPY tsconfig.json biome.json vitest.config.ts ./
+COPY examples ./examples
 COPY src ./src
 COPY tests ./tests
 RUN pnpm build
