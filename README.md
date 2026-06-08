@@ -48,13 +48,17 @@ Set these variables to persist encrypted GitDB files to a GitHub repository:
 ```bash
 export GITDB_KEY="base64url-32-byte-key"
 export GITDB_GITHUB_OWNER="3x-haust"
-export GITDB_GITHUB_REPO="gitdb-data"
+export GITDB_GITHUB_REPO="gitdb"
 export GITDB_GITHUB_TOKEN="ghp_or_fine_grained_token"
-export GITDB_GITHUB_BRANCH="main"
+export GITDB_GITHUB_BRANCH="data"
 gitdb serve
 ```
 
 Without `GITDB_GITHUB_*`, GitDB uses `.gitdb/gitdb/v1` locally.
+
+Use a dedicated data branch for public repositories. The released deployment
+uses `main` for application code and `data` for encrypted GitDB objects so data
+commits do not trigger application auto-deploys.
 
 ## Security Model
 
@@ -77,7 +81,8 @@ pnpm build
 
 ## Deployment
 
-The service is a long-running TCP server. Build and run it with:
+The service is a long-running HTTP control plane plus PostgreSQL-compatible TCP
+facade. Build and run it with:
 
 ```bash
 docker build -t gitdb .
@@ -87,3 +92,10 @@ docker run -p 3000:3000 -p 7432:7432 --env-file .env gitdb
 `pnpm start` runs the deployable NestJS control plane and starts the PostgreSQL
 facade in the same process. `pnpm start:facade` runs only the TCP facade for
 local ORM testing.
+
+The public control-plane deployment is available at
+`https://gitdb.3xhaust.dev/health`. It reports the facade bind target and
+storage mode. The `@3xhaust/deploy-cli` HTTP ingress exposes the control plane;
+external ORM access to the TCP facade requires a deploy target that exposes TCP
+port `7432`, or a local `gitdb serve` process pointed at the same GitHub-backed
+repository.

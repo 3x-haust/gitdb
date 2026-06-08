@@ -40,3 +40,16 @@ concurrency when updating files.
 
 GitHub is the durable sync layer. Query execution stays local for acceptable
 latency.
+
+Public deployments should write encrypted database objects to a branch that is
+separate from the application branch. The current release uses `main` for source
+code and `data` for encrypted `gitdb/v1` objects. This keeps public storage
+opaque while avoiding auto-deploy loops from database writes.
+
+## Deployment Boundary
+
+`pnpm start` launches the HTTP control plane and the PostgreSQL-compatible TCP
+facade in one process. HTTP deployments can verify readiness through `/` or
+`/health`. ORM clients still need TCP access to the facade port. When the deploy
+target only exposes HTTP ingress, run `gitdb serve` near the ORM process and use
+GitHub as the shared encrypted durability layer.
