@@ -91,17 +91,19 @@ Set these variables to persist encrypted GitDB files to a GitHub repository:
 ```bash
 export GITDB_KEY="$(node dist/src/cli/main.js keygen)"
 export GITDB_GITHUB_OWNER="3x-haust"
-export GITDB_GITHUB_REPO="gitdb"
-export GITDB_GITHUB_BRANCH="data"
+export GITDB_GITHUB_REPO="my-project-db"
+export GITDB_GITHUB_BRANCH="main"
 export GITDB_GITHUB_TOKEN="github_pat_... or ghp_..."
 gitdb serve
 ```
 
 Without `GITDB_GITHUB_*`, GitDB uses `.gitdb/gitdb/v1` locally.
 
-Use a dedicated data branch for public repositories. The released deployment
-uses `main` for application code and `data` for encrypted GitDB objects so data
-commits do not trigger application auto-deploys.
+Use a dedicated repository as the database for each project. For example, an
+app can live in `my-project` while its GitDB data lives in `my-project-db`.
+That database repository can be public or private. If it is public, keep
+`GITDB_ENCRYPTION=on` for real data, or use `GITDB_ENCRYPTION=off` only for
+intentional plaintext demos.
 
 `GITDB_GITHUB_TOKEN` can be either a fine-grained personal access token such as
 `github_pat_...` or a classic token such as `ghp_...`. Prefer a fine-grained
@@ -129,9 +131,10 @@ curl http://127.0.0.1:3090/people
 ```
 
 The example `.env` defaults to `GITDB_ENCRYPTION=off` so public GitHub storage
-is human-readable for inspection. Add `GITDB_GITHUB_TOKEN` to make it write to
-the configured public repo branch. Leave the token empty to run the same API
-against local plaintext files under `.gitdb-example-public`.
+is human-readable for inspection. It points at the dedicated public database
+repo `3x-haust/gitdb-example-db`, not this source-code repository. Add
+`GITDB_GITHUB_TOKEN` to make it write there. Leave the token empty to run the
+same API against local plaintext files under `.gitdb-example-public`.
 
 ## Security Model
 
