@@ -17,7 +17,7 @@ Express / Prisma / pg
         v
 GitDB PostgreSQL facade
         |
-        | SQL engine + local WAL/cache
+        | in-memory SQL engine + manifest/log replay
         v
 GitHub repository
 ```
@@ -297,10 +297,11 @@ GITDB_BENCH_GITHUB_ROWS=2 pnpm benchmark:github
 | postgres facade over local encrypted | 250 | 987.93 | 253.05 | 19.74 | 0.00 |
 | github plaintext contents api | 2 | 14157.49 | 0.14 | 6.70 | 1812.62 |
 
-해석은 분명합니다. local execution은 개발/저빈도 workload에는 쓸 만합니다. 하지만
+해석은 분명합니다. local execution은 실험/저빈도 workload에는 쓸 만합니다. 하지만
 mutation마다 GitHub Contents API를 직접 호출하는 방식은 hot path가 될 수
-없습니다. 실제 성능은 local WAL, cache, index, batched Git commit 구조에서 나와야
-합니다.
+없습니다. 현재 구현에서 live query는 manifest, mutation log, visible snapshot에서
+복원된 in-memory SQL engine에서 실행됩니다. WAL, index, batched Git commit은 현재
+보장사항이 아니라 다음 storage-engine 작업입니다.
 
 자세한 내용은 [BENCHMARKS.md](BENCHMARKS.md)를 참고하세요.
 

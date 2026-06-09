@@ -16,7 +16,7 @@ Express / Prisma / pg
         v
 GitDB PostgreSQL facade
         |
-        | SQL engine + local WAL/cache
+        | in-memory SQL engine + manifest/log replay
         v
 GitHub repository
 ```
@@ -294,10 +294,12 @@ Latest measured run:
 | postgres facade over local encrypted | 250 | 987.93 | 253.05 | 19.74 | 0.00 |
 | github plaintext contents api | 2 | 14157.49 | 0.14 | 6.70 | 1812.62 |
 
-Interpretation: local execution is already usable for development and
+Interpretation: local execution is already usable for experiments and
 low-frequency workloads. Direct per-mutation GitHub Contents API writes are too
-slow for the hot path. GitHub should be the durable sync layer, while local WAL,
-cache, indexes, and batched commits handle live query/write performance.
+slow for the hot path. In the current implementation, live queries execute in an
+in-memory SQL engine restored from a manifest, mutation log, or visible
+snapshot. WAL, indexes, and batched Git commits are planned storage-engine work,
+not current guarantees.
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
