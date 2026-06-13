@@ -1,28 +1,33 @@
 # GitDB
 
-English | [한국어](docs/README.ko.md)
+English | [한국어](docs/README.ko.md) | [Website](https://3x-haust.github.io/gitdb/)
 
-GitDB turns a GitHub repository into a project-scoped database.
+GitDB turns a GitHub repository into a project-scoped database runtime.
 
-It exposes a PostgreSQL-compatible local TCP endpoint, accepts SQL from tools
-such as Prisma and `pg`, executes the query in GitDB's engine, and persists the
-database into a dedicated GitHub repository. Public repositories can be used as
-human-readable data dashboards or as encrypted object stores.
+The database hot path is local: GitDB opens a runtime process, executes queries
+in its SQL engine, serializes writes through a transaction executor, and persists
+state as a manifest, mutation log, and visible snapshots. GitHub is the durable
+and auditable storage layer, not the place GitDB visits for every `SELECT`.
+
+GitDB now exposes two application entry points: a first-party TypeORM-style
+`DataSource`/repository API for new apps, and a PostgreSQL-compatible local TCP
+facade for tools such as Prisma and `pg`.
 
 ```text
-Express / Prisma / pg
+GitDB ORM / Prisma / pg
         |
         | postgresql://127.0.0.1:7432/main
         v
-GitDB PostgreSQL facade
+GitDB local runtime
         |
-        | in-memory SQL engine + manifest/log replay
+        | transaction executor + SQL engine + manifest/log replay
         v
 GitHub repository
 ```
 
-GitDB is not SQLite-over-GitHub, and it does not upload `.db` files. The GitHub
-repository is the durable database store.
+GitDB is not SQLite-over-GitHub, and it does not upload `.db` files. The
+PostgreSQL facade is only a compatibility layer; the storage-engine work is the
+core of the project.
 
 ## Why GitDB
 
@@ -33,8 +38,8 @@ primitives for project data.
 Use it when you want:
 
 - A database repository per project, for example `my-app-db`
-- SQL and ORM access without writing custom Prisma, TypeORM, Drizzle, or Kysely
-  providers
+- A first-party repository API for typed CRUD without adopting a separate ORM
+- PostgreSQL-compatible access for existing Prisma, `pg`, or raw SQL clients
 - Public data that can be inspected and edited from GitHub's web UI
 - Encrypted data in public or private repositories
 - Auditable commits for agent memory, demos, content tools, config tools, and
@@ -47,8 +52,9 @@ transactions, or full PostgreSQL compatibility today.
 
 | Area | Current behavior |
 | --- | --- |
-| ORM access | PostgreSQL-style local endpoint, so existing PostgreSQL clients can connect |
+| ORM access | First-party `DataSource`/repository API plus PostgreSQL-style local endpoint |
 | SQL | `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT`, joins, grouping, ordering, aggregates, and common raw-query flows |
+| Runtime guarantees | Single-process transaction queue, manifest-gated log replay, and checkpointed visible snapshots |
 | GitHub storage | Dedicated repository per database, created on first write when permissions allow |
 | Public plaintext mode | `table/schema.json` and `table/data.json` are visible and editable in GitHub |
 | Encrypted mode | AES-256-GCM encrypted manifest and mutation log files |
@@ -112,6 +118,34 @@ Install and build:
 ```bash
 pnpm install
 pnpm build
+```
+
+Use the first-party ORM-style repository API:
+
+```ts
+import { LocalPlaintextStore, createGitDbDataSource, defineEntity } from "@3xhaust/gitdb"
+
+type Person = {
+  readonly id: string
+  readonly name: string
+  readonly team_id: string
+}
+
+const PersonEntity = defineEntity<Person>({
+  columns: { id: "STRING", name: "STRING", team_id: "STRING" },
+  primaryKey: "id",
+  tableName: "people",
+})
+
+const dataSource = await createGitDbDataSource({
+  entities: [PersonEntity],
+  store: new LocalPlaintextStore({ root: ".gitdb" }),
+  synchronize: true,
+})
+
+const people = dataSource.getRepository(PersonEntity)
+await people.save({ id: "p1", name: "Lin", team_id: "storage" })
+const storagePeople = await people.find({ where: { team_id: "storage" } })
 ```
 
 Run the local PostgreSQL facade with encrypted local storage:
@@ -251,20 +285,27 @@ managed mode where that runtime is trusted to process plaintext query results.
 
 ## Architecture
 
-GitDB is split into three layers:
+GitDB is split into four layers:
 
-1. PostgreSQL-compatible facade
-   - Opens a local TCP endpoint.
-   - Lets existing clients use a normal PostgreSQL connection string.
-   - Avoids ORM-specific driver/provider work.
+1. First-party ORM API
+   - Provides `DataSource`, `Repository`, `save`, `find`, `findOne`, `delete`,
+     and explicit transaction access.
+   - Keeps new apps close to GitDB's runtime instead of forcing a PostgreSQL
+     compatibility hop.
 
-2. SQL engine
+2. PostgreSQL-compatible facade
+   - Opens a local TCP endpoint for existing clients.
+   - Lets Prisma, `pg`, and raw SQL clients use a normal PostgreSQL connection
+     string.
+
+3. SQL engine
    - Owns schema, mutation execution, query execution, joins, grouping, and
      result rows.
+   - Serializes local write transactions before persistence.
    - Targets the PostgreSQL subset produced by common Node.js clients and ORM
      raw-query flows.
 
-3. Storage providers
+4. Storage providers
    - Local encrypted store for development and tests.
    - Local plaintext store for visible snapshots.
    - GitHub encrypted/plaintext stores for remote durability.
@@ -279,6 +320,13 @@ Run local benchmarks:
 pnpm benchmark
 ```
 
+Compare the current runtime with the previous documented run and refresh the
+website evidence:
+
+```bash
+GITDB_BENCH_ROWS=250 pnpm benchmark:compare
+```
+
 Run the GitHub write benchmark:
 
 ```bash
@@ -289,17 +337,20 @@ Latest measured run:
 
 | Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| local plaintext visible snapshots | 250 | 1443.90 | 173.14 | 32.97 | 140.05 |
-| local encrypted mutation log | 250 | 761.99 | 328.09 | 4.31 | 322.51 |
-| postgres facade over local encrypted | 250 | 987.93 | 253.05 | 19.74 | 0.00 |
-| github plaintext contents api | 2 | 14157.49 | 0.14 | 6.70 | 1812.62 |
+| local plaintext throttled visible snapshots | 250 | 97.55 | 2562.73 | 3.28 | 47.42 |
+| local encrypted mutation log | 250 | 97.23 | 2571.34 | 0.87 | 45.26 |
+| postgres facade over local encrypted | 250 | 148.46 | 1683.91 | 2.31 | 0.00 |
 
-Interpretation: local execution is already usable for experiments and
-low-frequency workloads. Direct per-mutation GitHub Contents API writes are too
-slow for the hot path. In the current implementation, live queries execute in an
-in-memory SQL engine restored from a manifest, mutation log, or visible
-snapshot. WAL, indexes, and batched Git commits are planned storage-engine work,
-not current guarantees.
+Compared with the previous documented run, local plaintext writes improved from
+173.14 writes/s to 2562.73 writes/s, or 14.80x. Local encrypted writes improved
+from 328.09 writes/s to 2571.34 writes/s, or 7.84x.
+
+Interpretation: local execution is usable for examples, demos, and low-frequency
+workloads. Single-statement mutations no longer clone the whole in-memory
+database before every write; persistence failures restore committed manifest
+state. Direct per-mutation GitHub Contents API writes are still too slow for the
+hot path. WAL, indexes, compaction, and batched Git commits remain
+storage-engine work, not current full-OLTP guarantees.
 
 See [docs/BENCHMARKS.md](docs/BENCHMARKS.md).
 
@@ -352,6 +403,9 @@ pnpm check
 pnpm test
 pnpm build
 pnpm benchmark
+pnpm benchmark:evaluate
+pnpm pack:dry-run
+pnpm publish:dry-run
 pnpm start:facade
 pnpm example
 ```

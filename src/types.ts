@@ -22,6 +22,7 @@ export type VisibleTableSchema = {
 }
 
 export type VisibleDatabaseSnapshot = {
+  readonly sequence?: number
   readonly tables: readonly VisibleTableSnapshot[]
 }
 

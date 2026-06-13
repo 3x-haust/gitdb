@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitDB - GitHub-backed database runtime</title>
+    <meta
+      name="description"
+      content="GitDB is a local database runtime with auditable GitHub storage, transaction sequencing, snapshots, and ORM-friendly APIs."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="GitDB home">
+        <span class="brand-mark">G</span>
+        <span>GitDB</span>
+      </a>
+      <nav class="nav" aria-label="Primary navigation">
+        <a href="#explain">Explain</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="#runtime">Runtime</a>
+        <a href="#orm">ORM</a>
+        <a href="https://github.com/3x-haust/gitdb">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">GitHub Repo + DB Runtime</p>
+          <h1>GitDB</h1>
+          <p class="lede">
+            A local SQL engine and TypeORM-style repository API over durable,
+            auditable GitHub storage. GitHub is the storage and audit trail; the
+            hot path stays local.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://www.npmjs.com/package/@3xhaust/gitdb">
+              npm package
+            </a>
+            <a class="button secondary" href="https://github.com/3x-haust/gitdb">
+              source code
+            </a>
+          </div>
+          <dl class="metric-strip">
+            <div>
+              <dt>Local write speed</dt>
+              <dd id="hero-speedup">loading</dd>
+            </div>
+            <div>
+              <dt>Current writes/s</dt>
+              <dd id="hero-current-wps">loading</dd>
+            </div>
+            <div>
+              <dt>Previous writes/s</dt>
+              <dd id="hero-baseline-wps">loading</dd>
+            </div>
+          </dl>
+        </div>
+        <figure class="hero-visual">
+          <img src="./assets/runtime-map.svg" alt="GitDB runtime architecture map" />
+          <figcaption>
+            Local execution with manifest-gated persistence and visible snapshots.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="explain" id="explain">
+        <div class="section-heading">
+          <p class="eyebrow">What it is</p>
+          <h2>A database runtime that treats a GitHub repo as durable storage</h2>
+          <p>
+            GitDB is not a database file uploaded to GitHub. It keeps query
+            execution local, writes mutation logs and manifests, and uses the
+            repository as a durable, inspectable audit trail.
+          </p>
+        </div>
+        <div class="explain-layout">
+          <article class="definition">
+            <h3>Use GitDB when</h3>
+            <ul>
+              <li>project data should live in a dedicated repository</li>
+              <li>agents, demos, content tools, or config tools need audit history</li>
+              <li>new apps want a repository API without a separate ORM provider</li>
+              <li>existing clients need a local PostgreSQL-compatible endpoint</li>
+            </ul>
+          </article>
+          <article class="definition">
+            <h3>Do not use GitDB when</h3>
+            <ul>
+              <li>the workload needs high-throughput OLTP today</li>
+              <li>many writers need low-latency distributed transactions</li>
+              <li>full PostgreSQL compatibility is a hard requirement</li>
+              <li>GitHub Contents API writes would sit on the hot path</li>
+            </ul>
+          </article>
+          <div class="repo-layout">
+            <h3>Repository shape</h3>
+            <pre><code>gitdb/v1/
+  manifest.json
+  people/schema.json
+  people/data.json
+  teams/schema.json
+  teams/data.json
+  log/00000000000000000001.json</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="benchmark-band" id="benchmarks">
+        <div class="section-heading">
+          <p class="eyebrow">Measured example</p>
+          <h2>Current runtime versus previous documented run</h2>
+          <p>
+            The benchmark creates `teams` and `people`, inserts rows, runs a join,
+            and reopens storage where applicable.
+          </p>
+        </div>
+        <div class="benchmark-layout">
+          <div class="chart-panel" aria-label="Write throughput comparison">
+            <div class="chart-axis">
+              <span>previous</span>
+              <span>current</span>
+            </div>
+            <div id="chart-bars" class="chart-bars"></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Scenario</th>
+                  <th>Previous writes/s</th>
+                  <th>Current writes/s</th>
+                  <th>Change</th>
+                </tr>
+              </thead>
+              <tbody id="benchmark-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="runtime" id="runtime">
+        <div class="section-heading">
+          <p class="eyebrow">Storage engine first</p>
+          <h2>Not a SQL facade over a file</h2>
+        </div>
+        <div class="runtime-grid">
+          <article>
+            <h3>Transaction queue</h3>
+            <p>Local mutations are serialized before persistence so concurrent writes land in order.</p>
+          </article>
+          <article>
+            <h3>Manifest gates</h3>
+            <p>Commits advance through manifest state, visible snapshots, and rollback-aware logs.</p>
+          </article>
+          <article>
+            <h3>Remote audit trail</h3>
+            <p>GitHub stores durable state and reviewable history instead of serving every SELECT.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="orm" id="orm">
+        <div class="section-heading">
+          <p class="eyebrow">First-party ORM</p>
+          <h2>Repository API for new apps, PostgreSQL facade for existing clients</h2>
+        </div>
+        <pre><code>const Person = defineEntity({
+  tableName: "people",
+  primaryKey: "id",
+  columns: { id: "STRING", name: "STRING", team_id: "STRING" },
+})
+
+const dataSource = await createGitDbDataSource({
+  entities: [Person],
+  store,
+  synchronize: true,
+})
+
+await dataSource.getRepository(Person).save({
+  id: "p1",
+  name: "Ada",
+  team_id: "runtime",
+})</code></pre>
+      </section>
+    </main>
+
+    <footer>
+      <span>GitDB</span>
+      <a href="https://github.com/3x-haust/gitdb">GitHub</a>
+      <a href="https://www.npmjs.com/package/@3xhaust/gitdb">npm</a>
+      <a href="https://github.com/3x-haust/gitdb/blob/main/docs/BENCHMARKS.md">Benchmarks</a>
+    </footer>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

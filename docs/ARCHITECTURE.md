@@ -1,6 +1,17 @@
 # Architecture
 
-GitDB has four layers.
+GitDB has five layers.
+
+## First-Party ORM API
+
+New applications can use GitDB directly through `createGitDbDataSource`,
+`defineEntity`, and repository methods such as `save`, `find`, `findOne`, and
+`delete`. This is intentionally closer to TypeORM's `DataSource` and repository
+shape than to a PostgreSQL-only facade.
+
+The ORM API still executes through the same local runtime and transaction
+executor as raw SQL. It is a convenience surface over the storage engine, not a
+separate persistence path.
 
 ## PostgreSQL Facade
 
@@ -19,18 +30,35 @@ execution so common ORM-generated SQL can run.
 Unsupported PostgreSQL features return explicit errors instead of falling back
 silently.
 
+Mutations are serialized through a single-engine transaction queue. A
+single-statement mutation uses the hot local database directly, then persists the
+mutation segment and manifest. If persistence fails, the engine restores the last
+committed manifest state before returning the error. Explicit multi-statement
+transactions still run against an isolated in-memory database clone and swap the
+live database only after all segments and the manifest persist successfully. The
+manifest is updated in memory only after the durable manifest write succeeds, so
+a later mutation cannot publish orphan segments from a failed transaction.
+
 ## Storage Engine
 
-GitDB persists schema and data changes as encrypted mutation segments:
+GitDB persists schema and data changes as mutation segments plus a manifest:
 
 ```text
-gitdb/v1/manifest.enc
-gitdb/v1/log/<sequence>.enc
+gitdb/v1/manifest.json or manifest.enc
+gitdb/v1/log/<sequence>.json or <sequence>.enc
 ```
 
-On startup, the engine reads the manifest, decrypts the mutation log, and replays
-it into the hot query engine. This avoids GitHub round-trips during query
+On startup, the engine restores a visible snapshot when its checkpoint sequence
+matches the manifest. Otherwise it reads the manifest and replays the mutation
+log into the hot query engine. This avoids GitHub round-trips during query
 execution.
+
+Plaintext visible snapshots are dashboard artifacts and cold-start checkpoints.
+They can be written every mutation for maximum visibility or throttled by
+mutation interval for faster local workloads. Snapshot table files are written
+before `snapshot.json`; the checkpoint is the final marker that lets the engine
+trust a visible snapshot. Once a manifest has committed mutations, visible files
+without a checkpoint are ignored and the mutation log is replayed instead.
 
 ## GitHub Provider
 

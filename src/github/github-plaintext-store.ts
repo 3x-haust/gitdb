@@ -84,6 +84,7 @@ export class GitHubPlaintextStore implements GitDbStore {
   }
 
   async readVisibleSnapshot(): Promise<VisibleDatabaseSnapshot | null> {
+    const checkpoint = await this.#readSnapshotCheckpoint()
     const tableNames = await this.#readTableNames()
     const tables = []
     for (const tableName of tableNames) {
@@ -99,7 +100,10 @@ export class GitHubPlaintextStore implements GitDbStore {
         })
       }
     }
-    return tables.length === 0 ? null : { tables }
+    if (tables.length === 0) {
+      return null
+    }
+    return checkpoint === undefined ? { tables } : { sequence: checkpoint, tables }
   }
 
   async writeVisibleSnapshot(snapshot: VisibleDatabaseSnapshot): Promise<void> {
@@ -116,6 +120,13 @@ export class GitHubPlaintextStore implements GitDbStore {
         message: `gitdb sync ${table.name} data`,
         path: `${this.#config.prefix}/${table.name}/data.json`,
         plaintext: table.rows,
+      })
+    }
+    if (snapshot.sequence !== undefined) {
+      await this.#writeFile({
+        message: "gitdb sync plaintext snapshot checkpoint",
+        path: `${this.#config.prefix}/snapshot.json`,
+        plaintext: { sequence: snapshot.sequence },
       })
     }
   }
@@ -164,6 +175,15 @@ export class GitHubPlaintextStore implements GitDbStore {
       }
       throw error
     }
+  }
+
+  async #readSnapshotCheckpoint(): Promise<number | undefined> {
+    const payload = await this.#readNullable(`${this.#config.prefix}/snapshot.json`)
+    if (payload === null) {
+      return undefined
+    }
+    const parsed = JSON.parse(payload) as { readonly sequence?: unknown }
+    return typeof parsed.sequence === "number" ? parsed.sequence : undefined
   }
 
   async #writeFile(input: WriteFileInput): Promise<void> {

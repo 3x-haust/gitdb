@@ -56,6 +56,7 @@ export class LocalPlaintextStore implements GitDbStore {
   }
 
   async readVisibleSnapshot(): Promise<VisibleDatabaseSnapshot | null> {
+    const checkpoint = await this.#readSnapshotCheckpoint()
     const tableNames = await this.#readDirectoryNames()
     const tables = []
     for (const tableName of tableNames) {
@@ -69,7 +70,10 @@ export class LocalPlaintextStore implements GitDbStore {
         })
       }
     }
-    return tables.length === 0 ? null : { tables }
+    if (tables.length === 0) {
+      return null
+    }
+    return checkpoint === undefined ? { tables } : { sequence: checkpoint, tables }
   }
 
   async writeVisibleSnapshot(snapshot: VisibleDatabaseSnapshot): Promise<void> {
@@ -79,6 +83,9 @@ export class LocalPlaintextStore implements GitDbStore {
         name: table.name,
       })
       await this.#writeJson(join(this.#root, table.name, "data.json"), table.rows)
+    }
+    if (snapshot.sequence !== undefined) {
+      await this.#writeJson(join(this.#root, "snapshot.json"), { sequence: snapshot.sequence })
     }
   }
 
@@ -100,6 +107,15 @@ export class LocalPlaintextStore implements GitDbStore {
       }
       throw error
     }
+  }
+
+  async #readSnapshotCheckpoint(): Promise<number | undefined> {
+    const payload = await this.#readNullable(join(this.#root, "snapshot.json"))
+    if (payload === null) {
+      return undefined
+    }
+    const parsed = JSON.parse(payload) as { readonly sequence?: unknown }
+    return typeof parsed.sequence === "number" ? parsed.sequence : undefined
   }
 
   async #readNullable(path: string): Promise<string | null> {

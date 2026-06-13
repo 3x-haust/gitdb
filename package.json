@@ -1,24 +1,38 @@
 {
   "name": "@3xhaust/gitdb",
   "version": "0.1.0",
-  "description": "GitHub-native encrypted database with a PostgreSQL-compatible facade for existing ORMs.",
+  "description": "GitHub-backed local database runtime with auditable storage, transactions, and ORM APIs.",
   "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "homepage": "https://3x-haust.github.io/gitdb/",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
   "bin": {
-    "gitdb": "./dist/src/cli/main.js"
+    "gitdb": "dist/src/cli/main.js"
   },
   "files": [
-    "dist",
+    "dist/src",
     "README.md",
     "docs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "benchmark": "pnpm build && node scripts/benchmark.mjs",
+    "benchmark:compare": "GITDB_BENCH_OUTPUT=.gitdb/bench-current.json pnpm benchmark:evaluate > /dev/null && node scripts/benchmark-compare.mjs --current .gitdb/bench-current.json --baseline-path docs/BENCHMARKS.md --output site/benchmark.json --markdown site/benchmark.md",
+    "benchmark:evaluate": "pnpm build && node scripts/benchmark.mjs --json",
     "benchmark:github": "pnpm build && node scripts/benchmark.mjs --github",
     "check": "biome check . && tsc --noEmit",
     "example": "pnpm example:express-prisma",
     "example:express-prisma": "pnpm build && pnpm exec prisma generate --schema examples/express-prisma/schema.prisma && node examples/express-prisma/server.mjs",
     "format": "biome check --write .",
+    "pack:dry-run": "pnpm build && COREPACK_ENABLE_STRICT=0 npm pack --dry-run --json",
+    "publish:dry-run": "pnpm build && COREPACK_ENABLE_STRICT=0 npm publish --dry-run --access public",
+    "site:preview": "python3 -m http.server 4173 --directory site",
     "test": "vitest run",
     "test:e2e": "vitest run tests/e2e.test.ts",
     "start": "node dist/src/http/main.js",
@@ -58,8 +72,12 @@
     "node": ">=20.19.0"
   },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "repository": {
     "type": "git",
-    "url": "https://github.com/3x-haust/gitdb.git"
+    "url": "git+https://github.com/3x-haust/gitdb.git"
   }
 }

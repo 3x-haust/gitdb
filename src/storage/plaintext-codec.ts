@@ -37,6 +37,7 @@ const VisibleTableSnapshotSchema = VisibleTableSchemaSchema.extend({
 })
 
 const VisibleDatabaseSnapshotSchema = z.object({
+  sequence: z.number().int().nonnegative().optional(),
   tables: z.array(VisibleTableSnapshotSchema),
 })
 
@@ -65,7 +66,10 @@ export function parseVisibleTableRows(payload: string): VisibleTableSnapshot["ro
 }
 
 export function parseVisibleDatabaseSnapshot(payload: string): VisibleDatabaseSnapshot {
-  return VisibleDatabaseSnapshotSchema.parse(JSON.parse(payload))
+  const parsed = VisibleDatabaseSnapshotSchema.parse(JSON.parse(payload))
+  return parsed.sequence === undefined
+    ? { tables: parsed.tables }
+    : { sequence: parsed.sequence, tables: parsed.tables }
 }
 
 export function stringifyPlaintext(value: unknown): string {

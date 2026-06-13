@@ -1,0 +1,92 @@
+{
+  "baseline": {
+    "label": "previous documented run",
+    "source": "HEAD~1:docs/BENCHMARKS.md"
+  },
+  "comparisons": [
+    {
+      "baseline": {
+        "joinMs": 32.97,
+        "label": "local plaintext visible snapshots",
+        "reopenMs": 140.05,
+        "rows": 250,
+        "writeMs": 1443.9,
+        "writesPerSecond": 173.14
+      },
+      "current": {
+        "joinMs": 3.2837920000000054,
+        "label": "local plaintext throttled visible snapshots",
+        "reopenMs": 47.42029099999999,
+        "rows": 250,
+        "writeMs": 97.552042,
+        "writesPerSecond": 2562.7346683322116
+      },
+      "joinMsChangePct": 90.04006066120715,
+      "key": "local plaintext",
+      "reopenMsChangePct": 66.14045626561943,
+      "rows": 250,
+      "scenario": "local plaintext throttled visible snapshots",
+      "writeMsChangePct": 93.24385054366647,
+      "writeSpeedup": 14.801517086359084,
+      "writesPerSecondChangePct": 1380.1517086359086
+    },
+    {
+      "baseline": {
+        "joinMs": 4.31,
+        "label": "local encrypted mutation log",
+        "reopenMs": 322.51,
+        "rows": 250,
+        "writeMs": 761.99,
+        "writesPerSecond": 328.09
+      },
+      "current": {
+        "joinMs": 0.865791999999999,
+        "label": "local encrypted mutation log",
+        "reopenMs": 45.26150000000001,
+        "rows": 250,
+        "writeMs": 97.225708,
+        "writesPerSecond": 2571.3363794686893
+      },
+      "joinMsChangePct": 79.91201856148494,
+      "key": "local encrypted",
+      "reopenMsChangePct": 85.96586152367368,
+      "rows": 250,
+      "scenario": "local encrypted mutation log",
+      "writeMsChangePct": 87.2405532881009,
+      "writeSpeedup": 7.837289705473161,
+      "writesPerSecondChangePct": 683.7289705473161
+    },
+    {
+      "baseline": {
+        "joinMs": 19.74,
+        "label": "postgres facade over local encrypted",
+        "reopenMs": 0,
+        "rows": 250,
+        "writeMs": 987.93,
+        "writesPerSecond": 253.05
+      },
+      "current": {
+        "joinMs": 2.3100420000000668,
+        "label": "postgres facade over local encrypted",
+        "reopenMs": 0,
+        "rows": 250,
+        "writeMs": 148.463792,
+        "writesPerSecond": 1683.9122632675312
+      },
+      "joinMsChangePct": 88.29765957446774,
+      "key": "postgres facade",
+      "reopenMsChangePct": null,
+      "rows": 250,
+      "scenario": "postgres facade over local encrypted",
+      "writeMsChangePct": 84.9722356847145,
+      "writeSpeedup": 6.65446458513152,
+      "writesPerSecondChangePct": 565.446458513152
+    }
+  ],
+  "current": {
+    "label": "current working tree",
+    "source": ".gitdb/bench-current.json"
+  },
+  "generatedAt": "2026-06-13T16:15:58.844Z",
+  "headline": "Local plaintext writes are 14.80x of the previous documented run"
+}

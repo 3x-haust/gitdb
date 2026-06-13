@@ -1,29 +1,34 @@
 # GitDB
 
-[English](../README.md) | 한국어
+[English](../README.md) | 한국어 | [Website](https://3x-haust.github.io/gitdb/)
 
-GitDB는 GitHub repository 하나를 프로젝트 전용 데이터베이스처럼 쓰게 해주는
-GitHub-native database입니다.
+GitDB는 GitHub repository 하나를 프로젝트 전용 데이터베이스 runtime으로 쓰게
+해주는 GitHub-native database입니다.
 
-애플리케이션은 GitDB가 여는 PostgreSQL 호환 로컬 TCP endpoint에 접속합니다.
-Prisma나 `pg` 같은 기존 PostgreSQL 클라이언트는 평범한
-`postgresql://127.0.0.1:7432/main` 주소로 SQL을 보내고, GitDB는 그 SQL을 자체
-엔진에서 실행한 뒤 전용 GitHub repository에 데이터베이스 상태를 저장합니다.
+query hot path는 로컬입니다. GitDB runtime이 SQL engine에서 query를 실행하고,
+write는 transaction executor를 통해 직렬화한 뒤 manifest, mutation log, visible
+snapshot으로 상태를 저장합니다. GitHub는 매 `SELECT`마다 접근하는 곳이 아니라
+durable/auditable storage layer입니다.
+
+애플리케이션은 GitDB의 first-party TypeORM 스타일 `DataSource`/repository API를
+직접 쓰거나, Prisma와 `pg` 같은 기존 PostgreSQL client용 local TCP facade에
+접속할 수 있습니다.
 
 ```text
-Express / Prisma / pg
+GitDB ORM / Prisma / pg
         |
         | postgresql://127.0.0.1:7432/main
         v
-GitDB PostgreSQL facade
+GitDB local runtime
         |
-        | in-memory SQL engine + manifest/log replay
+        | transaction executor + SQL engine + manifest/log replay
         v
 GitHub repository
 ```
 
 GitDB는 SQLite를 GitHub에 올리는 도구가 아닙니다. `.db` 파일을 업로드하지
-않습니다. GitHub repository 자체가 GitDB의 durable database store입니다.
+않습니다. PostgreSQL facade는 호환 레이어이고, 핵심은 storage engine과 local
+runtime입니다.
 
 ## 왜 GitDB인가
 
@@ -34,7 +39,8 @@ repo, access control이 있습니다. GitDB는 이 GitHub primitive를 프로젝
 GitDB가 잘 맞는 경우:
 
 - 프로젝트마다 전용 데이터베이스 repo를 두고 싶을 때, 예: `my-app-db`
-- Prisma, TypeORM, Drizzle, Kysely provider를 직접 만들고 싶지 않을 때
+- 별도 ORM provider 없이 typed repository API를 쓰고 싶을 때
+- Prisma, `pg`, raw SQL client를 PostgreSQL 호환 endpoint로 연결하고 싶을 때
 - public demo 데이터를 GitHub 웹 UI에서 바로 보고 수정하고 싶을 때
 - public/private repo에 데이터를 암호화해서 저장하고 싶을 때
 - agent memory, demo, content tool, config tool, 저빈도 앱 데이터를 commit
@@ -50,8 +56,9 @@ GitDB가 맞지 않는 경우:
 
 | 영역 | 현재 동작 |
 | --- | --- |
-| ORM 접근 | PostgreSQL 스타일 로컬 endpoint를 열어 기존 PostgreSQL client가 접속 |
+| ORM 접근 | First-party `DataSource`/repository API와 PostgreSQL 스타일 local endpoint |
 | SQL | `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT`, join, group, order, aggregate, 일반적인 raw query 흐름 |
+| Runtime 보장 | single-process transaction queue, manifest-gated log replay, checkpointed visible snapshot |
 | GitHub 저장소 | 데이터베이스마다 전용 repo 사용, 권한이 있으면 최초 write 시 repo 생성 |
 | Public plaintext mode | `table/schema.json`, `table/data.json`을 GitHub에서 직접 확인/수정 |
 | Encrypted mode | AES-256-GCM으로 암호화된 manifest/log 저장 |
@@ -115,6 +122,34 @@ gitdb/v1/
 ```bash
 pnpm install
 pnpm build
+```
+
+first-party ORM 스타일 repository API 사용:
+
+```ts
+import { LocalPlaintextStore, createGitDbDataSource, defineEntity } from "@3xhaust/gitdb"
+
+type Person = {
+  readonly id: string
+  readonly name: string
+  readonly team_id: string
+}
+
+const PersonEntity = defineEntity<Person>({
+  columns: { id: "STRING", name: "STRING", team_id: "STRING" },
+  primaryKey: "id",
+  tableName: "people",
+})
+
+const dataSource = await createGitDbDataSource({
+  entities: [PersonEntity],
+  store: new LocalPlaintextStore({ root: ".gitdb" }),
+  synchronize: true,
+})
+
+const people = dataSource.getRepository(PersonEntity)
+await people.save({ id: "p1", name: "Lin", team_id: "storage" })
+const storagePeople = await people.find({ where: { team_id: "storage" } })
 ```
 
 encrypted local storage로 PostgreSQL facade 실행:
@@ -254,20 +289,27 @@ plaintext를 처리할 수 있습니다. 이건 의도적으로 key를 맡기는
 
 ## 아키텍처
 
-GitDB는 세 층으로 나뉩니다.
+GitDB는 네 층으로 나뉩니다.
 
-1. PostgreSQL-compatible facade
-   - 로컬 TCP endpoint를 엽니다.
-   - 기존 client가 평범한 PostgreSQL connection string으로 접속합니다.
-   - ORM별 provider/driver를 만들지 않아도 됩니다.
+1. First-party ORM API
+   - `DataSource`, `Repository`, `save`, `find`, `findOne`, `delete`,
+     explicit transaction을 제공합니다.
+   - 새 앱은 PostgreSQL 호환 hop 없이 GitDB runtime에 더 가깝게 붙을 수
+     있습니다.
 
-2. SQL engine
+2. PostgreSQL-compatible facade
+   - 기존 client용 로컬 TCP endpoint를 엽니다.
+   - Prisma, `pg`, raw SQL client가 평범한 PostgreSQL connection string으로
+     접속합니다.
+
+3. SQL engine
    - schema, mutation execution, query execution, join, grouping, result row를
      처리합니다.
+   - local write transaction을 직렬화합니다.
    - Node.js client와 ORM raw-query 흐름에서 자주 나오는 PostgreSQL subset을
      우선 지원합니다.
 
-3. Storage provider
+4. Storage provider
    - 개발/테스트용 local encrypted store
    - visible snapshot용 local plaintext store
    - remote durability용 GitHub encrypted/plaintext store
@@ -282,6 +324,12 @@ GitDB는 세 층으로 나뉩니다.
 pnpm benchmark
 ```
 
+현재 runtime과 이전 문서화된 run을 비교하고 웹사이트 evidence를 갱신:
+
+```bash
+GITDB_BENCH_ROWS=250 pnpm benchmark:compare
+```
+
 GitHub write 벤치마크:
 
 ```bash
@@ -292,16 +340,20 @@ GITDB_BENCH_GITHUB_ROWS=2 pnpm benchmark:github
 
 | Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| local plaintext visible snapshots | 250 | 1443.90 | 173.14 | 32.97 | 140.05 |
-| local encrypted mutation log | 250 | 761.99 | 328.09 | 4.31 | 322.51 |
-| postgres facade over local encrypted | 250 | 987.93 | 253.05 | 19.74 | 0.00 |
-| github plaintext contents api | 2 | 14157.49 | 0.14 | 6.70 | 1812.62 |
+| local plaintext throttled visible snapshots | 250 | 97.55 | 2562.73 | 3.28 | 47.42 |
+| local encrypted mutation log | 250 | 97.23 | 2571.34 | 0.87 | 45.26 |
+| postgres facade over local encrypted | 250 | 148.46 | 1683.91 | 2.31 | 0.00 |
 
-해석은 분명합니다. local execution은 실험/저빈도 workload에는 쓸 만합니다. 하지만
-mutation마다 GitHub Contents API를 직접 호출하는 방식은 hot path가 될 수
-없습니다. 현재 구현에서 live query는 manifest, mutation log, visible snapshot에서
-복원된 in-memory SQL engine에서 실행됩니다. WAL, index, batched Git commit은 현재
-보장사항이 아니라 다음 storage-engine 작업입니다.
+이전 문서화된 run과 비교하면 local plaintext write는 173.14 writes/s에서
+2562.73 writes/s로 개선되어 14.80x입니다. local encrypted write는 328.09
+writes/s에서 2571.34 writes/s로 개선되어 7.84x입니다.
+
+해석은 분명합니다. local execution은 example, demo, 저빈도 workload에 쓸 수
+있는 수준입니다. single-statement mutation은 더 이상 매 write마다 전체 in-memory
+database를 clone하지 않고, persistence 실패 시 committed manifest 상태로
+복구합니다. 하지만 mutation마다 GitHub Contents API를 직접 호출하는 방식은 hot
+path가 될 수 없습니다. WAL, index, compaction, batched Git commit은 현재 완성된
+OLTP 보장이 아니라 다음 storage-engine 작업입니다.
 
 자세한 내용은 [BENCHMARKS.md](BENCHMARKS.md)를 참고하세요.
 
@@ -350,6 +402,9 @@ pnpm check
 pnpm test
 pnpm build
 pnpm benchmark
+pnpm benchmark:evaluate
+pnpm pack:dry-run
+pnpm publish:dry-run
 pnpm start:facade
 pnpm example
 ```

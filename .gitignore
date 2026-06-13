@@ -8,3 +8,5 @@ examples/express-prisma/generated
 .DS_Store
 coverage
 *.tsbuildinfo
+.omo
+plans

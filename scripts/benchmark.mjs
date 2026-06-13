@@ -1,6 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { performance } from "node:perf_hooks"
 import { Client } from "pg"
 import { createAesGcmCipher } from "../dist/src/crypto/aes-gcm.js"
@@ -17,8 +17,9 @@ const results = []
 
 results.push(
   await benchEngine({
-    label: "local plaintext visible snapshots",
+    label: "local plaintext throttled visible snapshots",
     rows,
+    snapshotPolicy: { mode: "interval", mutations: 100 },
     store: (root) => new LocalPlaintextStore({ root }),
   }),
 )
@@ -39,12 +40,21 @@ if (args.has("--github")) {
   results.push(await benchGitHubPlaintext(githubRows))
 }
 
-process.stdout.write(formatMarkdown(results))
+if (process.env.GITDB_BENCH_OUTPUT !== undefined) {
+  await writeJson(process.env.GITDB_BENCH_OUTPUT, results)
+}
+
+process.stdout.write(
+  args.has("--json") ? `${JSON.stringify(results, null, 2)}\n` : formatMarkdown(results),
+)
 
 async function benchEngine(options) {
   const root = await mkdtemp(join(tmpdir(), "gitdb-bench-"))
   try {
-    const engine = await GitDbEngine.open({ store: options.store(root) })
+    const engine = await GitDbEngine.open({
+      snapshotPolicy: options.snapshotPolicy,
+      store: options.store(root),
+    })
     await createTables(engine)
     const writeMs = await time(async () => {
       await insertRows(engine, options.rows)
@@ -53,7 +63,10 @@ async function benchEngine(options) {
       await assertJoin(engine, options.rows)
     })
     const reopenMs = await time(async () => {
-      const reopened = await GitDbEngine.open({ store: options.store(root) })
+      const reopened = await GitDbEngine.open({
+        snapshotPolicy: options.snapshotPolicy,
+        store: options.store(root),
+      })
       await assertJoin(reopened, options.rows)
     })
     return result(options.label, options.rows, writeMs, joinMs, reopenMs)
@@ -173,6 +186,11 @@ function formatMarkdown(items) {
     )
   }
   return `${lines.join("\n")}\n`
+}
+
+async function writeJson(path, value) {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8")
 }
 
 function fixed(value) {
