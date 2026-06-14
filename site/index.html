@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GitDB - GitHub-backed database runtime</title>
+    <meta
+      name="description"
+      content="GitDB is a local database runtime with auditable GitHub storage, transaction sequencing, snapshots, and a first-party ORM."
+    />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="GitDB home">
+        <span class="brand-mark">G</span>
+        <span>GitDB</span>
+      </a>
+      <nav class="nav" aria-label="Primary navigation">
+        <a href="#tradeoffs">Trade-offs</a>
+        <a href="#benchmarks">Benchmarks</a>
+        <a href="#runtime">Runtime</a>
+        <a href="#orm">ORM</a>
+        <a href="https://github.com/3x-haust/gitdb">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">GitHub Repo + DB Runtime</p>
+          <h1>GitDB</h1>
+          <p class="lede">
+            A local SQL engine and first-party repository API over durable,
+            auditable GitHub storage. GitHub is the storage and audit trail; the
+            hot path stays local.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://www.npmjs.com/package/@3xhaust/gitdb">
+              npm package
+            </a>
+            <a class="button secondary" href="https://github.com/3x-haust/gitdb">
+              source code
+            </a>
+          </div>
+          <dl class="metric-strip">
+            <div>
+              <dt>Raw writes/s</dt>
+              <dd id="hero-raw-wps">loading</dd>
+            </div>
+            <div>
+              <dt>ORM writes/s</dt>
+              <dd id="hero-orm-wps">loading</dd>
+            </div>
+            <div>
+              <dt>Join latency</dt>
+              <dd id="hero-join-ms">loading</dd>
+            </div>
+          </dl>
+        </div>
+        <figure class="hero-visual">
+          <img src="./assets/runtime-map.svg" alt="GitDB runtime architecture map" />
+          <figcaption>
+            Local execution with manifest-gated persistence and visible snapshots.
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="explain" id="tradeoffs">
+        <div class="section-heading">
+          <p class="eyebrow">Trade-offs</p>
+          <h2>What GitDB is good at — and where it falls short</h2>
+          <p>
+            GitDB keeps query execution local and uses GitHub as a durable,
+            inspectable audit trail. That makes it a good fit for some
+            workloads and a poor fit for others.
+          </p>
+        </div>
+        <div class="explain-layout">
+          <article class="definition">
+            <h3>Strengths</h3>
+            <ul>
+              <li>Every mutation is logged and visible in GitHub history</li>
+              <li>Local query execution — no per-query network round-trip</li>
+              <li>First-party ORM ships with the package, no extra provider needed</li>
+              <li>Encrypted storage option with AES-GCM out of the box</li>
+              <li>Manifest-gated commits with rollback-aware mutation logs</li>
+              <li>Good fit for agents, demos, config tools, and content pipelines</li>
+            </ul>
+          </article>
+          <article class="definition">
+            <h3>Limitations</h3>
+            <ul>
+              <li>ORM <code>save()</code> is slow — DELETE + INSERT per row in its own transaction (~46 writes/s)</li>
+              <li>GitHub Contents API writes are not a viable hot path</li>
+              <li>Not suited for high-throughput OLTP or concurrent multi-writer workloads</li>
+              <li>Limited SQL subset — not a mature general-purpose OLTP engine yet</li>
+              <li>No secondary indexes yet; joins scan every visible row</li>
+            </ul>
+          </article>
+          <div class="repo-layout">
+            <h3>Repository shape</h3>
+            <pre><code>gitdb/v1/
+  manifest.json
+  people/schema.json
+  people/data.json
+  teams/schema.json
+  teams/data.json
+  log/00000000000000000001.json</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="benchmark-band" id="benchmarks">
+        <div class="section-heading">
+          <p class="eyebrow">Measured performance</p>
+          <h2>Local engine vs ORM write throughput</h2>
+          <p>
+            250 rows, local storage. Raw engine benchmarks use direct SQL
+            execution. ORM benchmark uses <code>repository.save()</code>, which
+            wraps each write in a DELETE + INSERT transaction — the main source
+            of ORM overhead.
+          </p>
+        </div>
+        <div class="benchmark-layout">
+          <div class="chart-panel" aria-label="Write throughput by scenario">
+            <div class="chart-axis">
+              <span>slower</span>
+              <span>faster</span>
+            </div>
+            <div id="chart-bars" class="chart-bars"></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Scenario</th>
+                  <th>Writes/s</th>
+                  <th>Write ms</th>
+                  <th>Join ms</th>
+                  <th>Reopen ms</th>
+                </tr>
+              </thead>
+              <tbody id="benchmark-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="runtime" id="runtime">
+        <div class="section-heading">
+          <p class="eyebrow">Storage engine first</p>
+          <h2>A runtime, log, and snapshot system over repository storage</h2>
+        </div>
+        <div class="runtime-grid">
+          <article>
+            <h3>Transaction queue</h3>
+            <p>Local mutations are serialized before persistence so concurrent writes land in order.</p>
+          </article>
+          <article>
+            <h3>Manifest gates</h3>
+            <p>Commits advance through manifest state, visible snapshots, and rollback-aware logs.</p>
+          </article>
+          <article>
+            <h3>Remote audit trail</h3>
+            <p>GitHub stores durable state and reviewable history instead of serving every SELECT.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="orm" id="orm">
+        <div class="section-heading">
+          <p class="eyebrow">First-party ORM</p>
+          <h2>Repository API for new apps</h2>
+          <p>
+            Define entities, open a data source, and use typed repositories.
+            Each <code>save()</code> is upsert-safe but runs a DELETE + INSERT
+            transaction — use raw <code>dataSource.query()</code> for bulk inserts.
+          </p>
+        </div>
+        <pre><code>const Person = defineEntity({
+  tableName: "people",
+  primaryKey: "id",
+  columns: { id: "STRING", name: "STRING", team_id: "STRING" },
+})
+
+const dataSource = await createGitDbDataSource({
+  entities: [Person],
+  store,
+  synchronize: true,
+})
+
+await dataSource.getRepository(Person).save({
+  id: "p1",
+  name: "Ada",
+  team_id: "runtime",
+})</code></pre>
+      </section>
+    </main>
+
+    <footer>
+      <span>GitDB</span>
+      <a href="https://github.com/3x-haust/gitdb">GitHub</a>
+      <a href="https://www.npmjs.com/package/@3xhaust/gitdb">npm</a>
+      <a href="https://github.com/3x-haust/gitdb/blob/main/docs/BENCHMARKS.md">Benchmarks</a>
+    </footer>
+
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

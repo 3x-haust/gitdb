@@ -1,4 +1,4 @@
-export function normalizePostgresSql(sql: string): string {
+export function normalizeGitDbSql(sql: string): string {
   return sql
     .replaceAll(/"/g, "")
     .replaceAll(/\bSERIAL\b/gi, "INT")

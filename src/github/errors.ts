@@ -35,7 +35,7 @@ export function gitHubWriteError(
         `GitHub database repo ${config.owner}/${config.repo}@${config.branch} is not writable with GITDB_GITHUB_TOKEN while writing ${path}.`,
         "Check that the repository exists, the branch exists, and the token is granted to this repository with Contents: Read and write.",
         "GitHub returns 404 for private or unauthorized repositories.",
-        "For local Express + Prisma example mode, leave GITDB_GITHUB_TOKEN blank.",
+        "For local-only example mode, leave GITDB_GITHUB_TOKEN blank.",
       ].join(" "),
     )
   }

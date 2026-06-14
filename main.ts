@@ -1,1 +1,1 @@
-import "./src/http/main.js"
+import "./src/cli/main.js"

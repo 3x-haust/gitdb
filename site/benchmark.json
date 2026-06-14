@@ -1,0 +1,95 @@
+{
+  "baseline": {
+    "label": "previous documented run",
+    "source": "HEAD~1:docs/BENCHMARKS.md"
+  },
+  "comparisons": [
+    {
+      "baseline": {
+        "joinMs": 32.97,
+        "label": "local plaintext visible snapshots",
+        "reopenMs": 140.05,
+        "rows": 250,
+        "writeMs": 1443.9,
+        "writesPerSecond": 173.14
+      },
+      "current": {
+        "joinMs": 4.881749999999954,
+        "label": "local plaintext throttled visible snapshots",
+        "reopenMs": 77.61854200000005,
+        "rows": 250,
+        "writeMs": 146.747167,
+        "writesPerSecond": 1703.6104008740422
+      },
+      "joinMsChangePct": 85.19335759781633,
+      "key": "local plaintext",
+      "reopenMsChangePct": 44.57797786504817,
+      "rows": 250,
+      "scenario": "local plaintext throttled visible snapshots",
+      "writeMsChangePct": 89.83674998268579,
+      "writeSpeedup": 9.839496366374277,
+      "writesPerSecondChangePct": 883.9496366374277
+    },
+    {
+      "baseline": {
+        "joinMs": 4.31,
+        "label": "local encrypted mutation log",
+        "reopenMs": 322.51,
+        "rows": 250,
+        "writeMs": 761.99,
+        "writesPerSecond": 328.09
+      },
+      "current": {
+        "joinMs": 1.1787500000000364,
+        "label": "local encrypted mutation log",
+        "reopenMs": 78.30991699999993,
+        "rows": 250,
+        "writeMs": 234.367166,
+        "writesPerSecond": 1066.7023212628683
+      },
+      "joinMsChangePct": 72.65081206496436,
+      "key": "local encrypted",
+      "reopenMsChangePct": 75.71860810517505,
+      "rows": 250,
+      "scenario": "local encrypted mutation log",
+      "writeMsChangePct": 69.24275042979566,
+      "writeSpeedup": 3.251249112325485,
+      "writesPerSecondChangePct": 225.1249112325485
+    }
+  ],
+  "current": {
+    "label": "current working tree",
+    "source": ".gitdb/bench-current.json"
+  },
+  "generatedAt": "2026-06-14T01:35:43.313Z",
+  "headline": "Local plaintext writes are 9.84x of the previous documented run",
+  "scenarios": [
+    {
+      "joinMs": 4.881749999999954,
+      "label": "local plaintext throttled visible snapshots",
+      "reopenMs": 77.61854200000005,
+      "rows": 250,
+      "writeMs": 146.747167,
+      "writesPerSecond": 1703.6104008740422,
+      "key": "local-plaintext"
+    },
+    {
+      "joinMs": 1.1787500000000364,
+      "label": "local encrypted mutation log",
+      "reopenMs": 78.30991699999993,
+      "rows": 250,
+      "writeMs": 234.367166,
+      "writesPerSecond": 1066.7023212628683,
+      "key": "local-encrypted"
+    },
+    {
+      "joinMs": 1.30266599999959,
+      "label": "orm local plaintext",
+      "reopenMs": 136.289667,
+      "rows": 250,
+      "writeMs": 5377.3372500000005,
+      "writesPerSecond": 46.49141171125169,
+      "key": "orm-local-plaintext"
+    }
+  ]
+}

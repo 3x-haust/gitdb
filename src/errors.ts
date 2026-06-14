@@ -32,3 +32,7 @@ export class UnsupportedSqlError extends Error {
 export class ProtocolError extends Error {
   readonly name = "ProtocolError"
 }
+
+export class GitDbOrmError extends Error {
+  readonly name = "GitDbOrmError"
+}

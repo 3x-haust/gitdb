@@ -1,14 +1,25 @@
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { performance } from "node:perf_hooks"
-import { Client } from "pg"
 import { createAesGcmCipher } from "../dist/src/crypto/aes-gcm.js"
 import { GitHubPlaintextStore } from "../dist/src/github/github-plaintext-store.js"
-import { createGitDbServer } from "../dist/src/protocol/postgres-server.js"
+import { createGitDbDataSource, defineEntity } from "../dist/src/orm/index.js"
 import { GitDbEngine } from "../dist/src/sql/engine.js"
 import { LocalEncryptedStore } from "../dist/src/storage/local-encrypted-store.js"
 import { LocalPlaintextStore } from "../dist/src/storage/local-plaintext-store.js"
+
+const Team = defineEntity({
+  columns: { id: "STRING", name: "STRING" },
+  primaryKey: "id",
+  tableName: "teams",
+})
+
+const Person = defineEntity({
+  columns: { id: "STRING", name: "STRING", team_id: "STRING" },
+  primaryKey: "id",
+  tableName: "people",
+})
 
 const args = new Set(process.argv.slice(2))
 const rows = numberEnv("GITDB_BENCH_ROWS", 250)
@@ -17,8 +28,9 @@ const results = []
 
 results.push(
   await benchEngine({
-    label: "local plaintext visible snapshots",
+    label: "local plaintext throttled visible snapshots",
     rows,
+    snapshotPolicy: { mode: "interval", mutations: 100 },
     store: (root) => new LocalPlaintextStore({ root }),
   }),
 )
@@ -33,18 +45,41 @@ results.push(
       }),
   }),
 )
-results.push(await benchPostgresFacade(rows))
+results.push(
+  await benchOrm({
+    label: "orm local plaintext",
+    rows,
+    snapshotPolicy: { mode: "interval", mutations: 100 },
+    store: (root) => new LocalPlaintextStore({ root }),
+  }),
+)
 
 if (args.has("--github")) {
   results.push(await benchGitHubPlaintext(githubRows))
 }
 
-process.stdout.write(formatMarkdown(results))
+if (process.env.GITDB_BENCH_OUTPUT !== undefined) {
+  await writeJson(process.env.GITDB_BENCH_OUTPUT, results)
+}
+
+if (process.env.GITDB_SITE_OUTPUT !== undefined) {
+  await writeJson(process.env.GITDB_SITE_OUTPUT, {
+    generatedAt: new Date().toISOString(),
+    scenarios: results.map((r) => ({ ...r, key: scenarioKey(r.label) })),
+  })
+}
+
+process.stdout.write(
+  args.has("--json") ? `${JSON.stringify(results, null, 2)}\n` : formatMarkdown(results),
+)
 
 async function benchEngine(options) {
   const root = await mkdtemp(join(tmpdir(), "gitdb-bench-"))
   try {
-    const engine = await GitDbEngine.open({ store: options.store(root) })
+    const engine = await GitDbEngine.open({
+      snapshotPolicy: options.snapshotPolicy,
+      store: options.store(root),
+    })
     await createTables(engine)
     const writeMs = await time(async () => {
       await insertRows(engine, options.rows)
@@ -53,7 +88,10 @@ async function benchEngine(options) {
       await assertJoin(engine, options.rows)
     })
     const reopenMs = await time(async () => {
-      const reopened = await GitDbEngine.open({ store: options.store(root) })
+      const reopened = await GitDbEngine.open({
+        snapshotPolicy: options.snapshotPolicy,
+        store: options.store(root),
+      })
       await assertJoin(reopened, options.rows)
     })
     return result(options.label, options.rows, writeMs, joinMs, reopenMs)
@@ -62,30 +100,49 @@ async function benchEngine(options) {
   }
 }
 
-async function benchPostgresFacade(rowCount) {
-  const root = await mkdtemp(join(tmpdir(), "gitdb-pg-bench-"))
-  const store = new LocalEncryptedStore({
-    cipher: createAesGcmCipher(Buffer.alloc(32, 9).toString("base64url")),
-    root,
-  })
-  const engine = await GitDbEngine.open({ store })
-  const server = await createGitDbServer({ engine, host: "127.0.0.1", port: 0 })
-  const client = new Client({
-    connectionString: `postgresql://127.0.0.1:${server.port}/main`,
-  })
+async function benchOrm(options) {
+  const root = await mkdtemp(join(tmpdir(), "gitdb-orm-bench-"))
   try {
-    await client.connect()
-    await createTables(client)
+    const dataSource = await createGitDbDataSource({
+      entities: [Team, Person],
+      snapshotPolicy: options.snapshotPolicy,
+      store: options.store(root),
+      synchronize: true,
+    })
+    const teams = dataSource.getRepository(Team)
+    const people = dataSource.getRepository(Person)
+    for (let i = 0; i < 10; i += 1) {
+      await teams.save({ id: `t${i}`, name: `Team ${i}` })
+    }
     const writeMs = await time(async () => {
-      await insertRows(client, rowCount)
+      for (let i = 0; i < options.rows; i += 1) {
+        await people.save({ id: `p${i}`, name: `Person ${i}`, team_id: `t${i % 10}` })
+      }
     })
     const joinMs = await time(async () => {
-      await assertJoin(client, rowCount)
+      const result = await dataSource.query(
+        "SELECT people.name AS person, teams.name AS team FROM people JOIN teams ON people.team_id = teams.id ORDER BY people.name",
+      )
+      if (result.length !== options.rows) {
+        throw new Error(`expected ${options.rows} joined rows, got ${result.length}`)
+      }
     })
-    return result("postgres facade over local encrypted", rowCount, writeMs, joinMs, 0)
+    const reopenMs = await time(async () => {
+      const reopened = await createGitDbDataSource({
+        entities: [Team, Person],
+        snapshotPolicy: options.snapshotPolicy,
+        store: options.store(root),
+        synchronize: false,
+      })
+      const rows = await reopened.query(
+        "SELECT people.name AS person, teams.name AS team FROM people JOIN teams ON people.team_id = teams.id ORDER BY people.name",
+      )
+      if (rows.length !== options.rows) {
+        throw new Error(`expected ${options.rows} joined rows, got ${rows.length}`)
+      }
+    })
+    return result(options.label, options.rows, writeMs, joinMs, reopenMs)
   } finally {
-    await client.end()
-    await server.close()
     await rm(root, { force: true, recursive: true })
   }
 }
@@ -162,6 +219,15 @@ function result(label, rowCount, writeMs, joinMs, reopenMs) {
   }
 }
 
+function scenarioKey(label) {
+  const normalized = label.toLowerCase()
+  if (normalized.startsWith("orm local plaintext")) return "orm-local-plaintext"
+  if (normalized.startsWith("local plaintext")) return "local-plaintext"
+  if (normalized.startsWith("local encrypted")) return "local-encrypted"
+  if (normalized.startsWith("github plaintext")) return "github-plaintext"
+  return normalized.replaceAll(/\s+/g, "-")
+}
+
 function formatMarkdown(items) {
   const lines = [
     "| Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |",
@@ -175,14 +241,19 @@ function formatMarkdown(items) {
   return `${lines.join("\n")}\n`
 }
 
+async function writeJson(path, value) {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8")
+}
+
 function fixed(value) {
   return value.toFixed(2)
 }
 
-function numberEnv(name, fallback) {
+function numberEnv(name, defaultValue) {
   const value = process.env[name]
   if (value === undefined || value.trim().length === 0) {
-    return fallback
+    return defaultValue
   }
   const parsed = Number.parseInt(value, 10)
   if (!Number.isFinite(parsed) || parsed <= 0) {

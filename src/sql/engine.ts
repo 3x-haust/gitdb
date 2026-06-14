@@ -1,42 +1,42 @@
-import alasql from "alasql"
-import { z } from "zod"
 import { SqlExecutionError } from "../errors.js"
 import type { GitDbStore } from "../storage/store.js"
-import type {
-  GitDbManifest,
-  PersistedMutation,
-  SqlResult,
-  VisibleDatabaseSnapshot,
-} from "../types.js"
-import { maybeCatalogResult } from "./catalog.js"
-import { commandTag, isMutation, isTransactionControl, normalizePostgresSql } from "./normalize.js"
+import type { GitDbManifest, PersistedMutation, SqlResult } from "../types.js"
+import {
+  type AlaSqlDatabase,
+  createDatabase,
+  databaseFromSnapshot,
+  execOn,
+  restoreSnapshot,
+  snapshotFromDatabase,
+} from "./database.js"
+import { commandTag, isMutation, isTransactionControl, normalizeGitDbSql } from "./normalize.js"
 import { toRows } from "./rows.js"
+import { EngineTransaction, type GitDbTransaction } from "./transaction.js"
+
+export type { GitDbTransaction } from "./transaction.js"
 
 type GitDbEngineOptions = {
   readonly store: GitDbStore
+  readonly snapshotPolicy?: SnapshotPolicy
 }
 
-const AlaSqlColumnSchema = z.object({
-  columnid: z.string().min(1),
-})
-
-const AlaSqlTableSchema = z.object({
-  columns: z.array(AlaSqlColumnSchema),
-  data: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))),
-})
-
-const AlaSqlTablesSchema = z.record(z.string(), AlaSqlTableSchema)
+export type SnapshotPolicy =
+  | { readonly mode: "everyMutation" }
+  | { readonly mode: "interval"; readonly mutations: number }
 
 export class GitDbEngine {
-  readonly #db: InstanceType<typeof alasql.Database>
+  #db: AlaSqlDatabase
   readonly #store: GitDbStore
+  readonly #snapshotPolicy: SnapshotPolicy
   #manifest: GitDbManifest
+  #mutationQueue = Promise.resolve()
+  #lastVisibleSnapshotError: unknown = undefined
 
-  private constructor(store: GitDbStore, manifest: GitDbManifest) {
+  private constructor(store: GitDbStore, manifest: GitDbManifest, snapshotPolicy: SnapshotPolicy) {
     this.#store = store
     this.#manifest = manifest
-    this.#db = new alasql.Database("gitdb")
-    alasql.options.postgres = true
+    this.#snapshotPolicy = snapshotPolicy
+    this.#db = createDatabase()
   }
 
   static async open(options: GitDbEngineOptions): Promise<GitDbEngine> {
@@ -50,7 +50,11 @@ export class GitDbEngine {
         updatedAt: now,
         logSegments: [],
       } satisfies GitDbManifest)
-    const engine = new GitDbEngine(options.store, manifest)
+    const engine = new GitDbEngine(
+      options.store,
+      manifest,
+      options.snapshotPolicy ?? { mode: "everyMutation" },
+    )
     const restoredSnapshot = await engine.#restoreVisibleSnapshot()
     if (!restoredSnapshot) {
       await engine.#replay()
@@ -62,23 +66,59 @@ export class GitDbEngine {
   }
 
   async execute(sql: string): Promise<SqlResult> {
-    const catalog = maybeCatalogResult(sql)
-    if (catalog !== null) {
-      return catalog
-    }
     if (isTransactionControl(sql)) {
       return { command: commandTag(sql, 0), rowCount: 0, rows: [] }
     }
-    const normalized = normalizePostgresSql(sql)
-    const result = this.#exec(normalized, sql)
+    const normalized = normalizeGitDbSql(sql)
+    if (isMutation(sql)) {
+      return await this.#executeSingleMutation(normalized, sql)
+    }
+    const result = execOn(this.#db, normalized, sql)
     const rows = toRows(result)
     const rowCount = rows.length > 0 ? rows.length : typeof result === "number" ? result : 0
-    const response = { command: commandTag(sql, rowCount), rowCount, rows } satisfies SqlResult
-    if (isMutation(sql)) {
-      await this.#persist(sql)
-      await this.#persistVisibleSnapshot()
-    }
-    return response
+    return { command: commandTag(sql, rowCount), rowCount, rows }
+  }
+
+  async transaction<T>(work: (transaction: GitDbTransaction) => Promise<T>): Promise<T> {
+    return await this.#enqueueMutation(async () => {
+      const baseSnapshot = snapshotFromDatabase(this.#db, this.#manifest.sequence)
+      const transactionDb = databaseFromSnapshot(baseSnapshot)
+      const transaction = new EngineTransaction(transactionDb)
+      const value = await work(transaction)
+      const mutations = transaction.mutations()
+      if (mutations.length === 0) {
+        return value
+      }
+      await this.#persistMany(mutations)
+      this.#db = transactionDb
+      if (this.#shouldPersistVisibleSnapshot()) {
+        await this.#persistVisibleSnapshotBestEffort()
+      }
+      return value
+    })
+  }
+
+  async #executeSingleMutation(normalizedSql: string, originalSql: string): Promise<SqlResult> {
+    return await this.#enqueueMutation(async () => {
+      const committedManifest = this.#manifest
+      try {
+        const result = execOn(this.#db, normalizedSql, originalSql)
+        const rows = toRows(result)
+        const rowCount = rows.length > 0 ? rows.length : typeof result === "number" ? result : 0
+        await this.#persistMany([originalSql])
+        if (this.#shouldPersistVisibleSnapshot()) {
+          await this.#persistVisibleSnapshotBestEffort()
+        }
+        return { command: commandTag(originalSql, rowCount), rowCount, rows }
+      } catch (error: unknown) {
+        await this.#restoreCommittedState(committedManifest)
+        throw error
+      }
+    })
+  }
+
+  getLastVisibleSnapshotError(): unknown | undefined {
+    return this.#lastVisibleSnapshotError
   }
 
   async #restoreVisibleSnapshot(): Promise<boolean> {
@@ -89,14 +129,13 @@ export class GitDbEngine {
     if (snapshot === null) {
       return false
     }
-    for (const table of snapshot.tables) {
-      const columns = table.columns.map((column) => `${column} STRING`).join(", ")
-      this.#exec(`CREATE TABLE IF NOT EXISTS ${table.name} (${columns})`, `restore ${table.name}`)
-      for (const row of table.rows) {
-        const values = table.columns.map((column) => sqlLiteral(row[column] ?? null)).join(", ")
-        this.#exec(`INSERT INTO ${table.name} VALUES (${values})`, `restore ${table.name}`)
-      }
+    if (snapshot.sequence === undefined && this.#manifest.sequence > 0) {
+      return false
     }
+    if (snapshot.sequence !== undefined && snapshot.sequence !== this.#manifest.sequence) {
+      return false
+    }
+    restoreSnapshot(this.#db, snapshot)
     return true
   }
 
@@ -104,60 +143,79 @@ export class GitDbEngine {
     if (this.#store.writeVisibleSnapshot === undefined) {
       return
     }
-    await this.#store.writeVisibleSnapshot(this.#visibleSnapshot())
+    await this.#store.writeVisibleSnapshot(snapshotFromDatabase(this.#db, this.#manifest.sequence))
   }
 
-  #visibleSnapshot(): VisibleDatabaseSnapshot {
-    const parsed = AlaSqlTablesSchema.parse(this.#db.tables)
-    return {
-      tables: Object.entries(parsed).map(([name, table]) => ({
-        columns: table.columns.map((column) => column.columnid),
-        name,
-        rows: table.data,
-      })),
+  async #persistVisibleSnapshotBestEffort(): Promise<void> {
+    try {
+      await this.#persistVisibleSnapshot()
+      this.#lastVisibleSnapshotError = undefined
+    } catch (error: unknown) {
+      this.#lastVisibleSnapshotError = error
     }
   }
 
   async #replay(): Promise<void> {
     const mutations = await this.#store.readMutations(this.#manifest.logSegments)
     for (const mutation of mutations) {
-      this.#exec(normalizePostgresSql(mutation.sql), mutation.sql)
+      execOn(this.#db, normalizeGitDbSql(mutation.sql), mutation.sql)
     }
   }
 
-  async #persist(sql: string): Promise<void> {
-    const nextSequence = this.#manifest.sequence + 1
-    const at = new Date().toISOString()
-    const mutation = { at, sequence: nextSequence, sql } satisfies PersistedMutation
-    const segment = await this.#store.appendMutation(mutation)
-    this.#manifest = {
+  async #persistMany(sqlStatements: readonly string[]): Promise<void> {
+    let sequence = this.#manifest.sequence
+    const logSegments = [...this.#manifest.logSegments]
+    let updatedAt = this.#manifest.updatedAt
+    for (const sql of sqlStatements) {
+      sequence += 1
+      updatedAt = new Date().toISOString()
+      const mutation = { at: updatedAt, sequence, sql } satisfies PersistedMutation
+      const segment = await this.#store.appendMutation(mutation)
+      logSegments.push(segment)
+    }
+    const nextManifest = {
       ...this.#manifest,
-      sequence: nextSequence,
-      updatedAt: at,
-      logSegments: [...this.#manifest.logSegments, segment],
+      logSegments,
+      sequence,
+      updatedAt,
     }
-    await this.#store.writeManifest(this.#manifest)
+    await this.#store.writeManifest(nextManifest)
+    this.#manifest = nextManifest
   }
 
-  #exec(normalizedSql: string, originalSql: string): unknown {
-    try {
-      return this.#db.exec(normalizedSql)
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error)
-      throw new SqlExecutionError(originalSql, detail)
+  async #restoreCommittedState(manifest: GitDbManifest): Promise<void> {
+    this.#manifest = manifest
+    this.#db = createDatabase()
+    const restoredSnapshot = await this.#restoreVisibleSnapshot()
+    if (!restoredSnapshot) {
+      await this.#replay()
+    }
+  }
+
+  async #enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const queued = this.#mutationQueue.then(operation, operation)
+    this.#mutationQueue = queued.then(
+      () => undefined,
+      () => undefined,
+    )
+    return await queued
+  }
+
+  #shouldPersistVisibleSnapshot(): boolean {
+    switch (this.#snapshotPolicy.mode) {
+      case "everyMutation":
+        return true
+      case "interval":
+        return this.#manifest.sequence % this.#snapshotPolicy.mutations === 0
+      default:
+        return assertNever(this.#snapshotPolicy)
     }
   }
 }
 
-function sqlLiteral(value: string | number | boolean | null): string {
-  if (value === null) {
-    return "NULL"
-  }
-  if (typeof value === "number") {
-    return value.toString()
-  }
-  if (typeof value === "boolean") {
-    return value ? "TRUE" : "FALSE"
-  }
-  return `'${value.replaceAll("'", "''")}'`
+function assertNever(value: never): never {
+  throw new SqlExecutionError(
+    "snapshot policy",
+    `unexpected snapshot policy ${JSON.stringify(value)}`,
+  )
 }
