@@ -9,9 +9,9 @@ export {
   type GitDbColumnType,
   GitDbDataSource,
   type GitDbDataSourceOptions,
+  type GitDbEntityDefinition,
   GitDbRepository,
 } from "./orm/index.js"
-export { createGitDbServer } from "./protocol/postgres-server.js"
 export { GitDbEngine, type GitDbTransaction } from "./sql/engine.js"
 export { LocalEncryptedStore } from "./storage/local-encrypted-store.js"
 export { LocalPlaintextStore } from "./storage/local-plaintext-store.js"

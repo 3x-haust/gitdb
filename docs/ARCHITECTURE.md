@@ -1,83 +1,116 @@
-# Architecture
+# GitDB Architecture
 
-GitDB has five layers.
+GitDB is a first-party database runtime that uses a GitHub repository as durable
+storage and audit history. Applications use the GitDB API directly; query
+execution and write ordering stay local.
 
-## First-Party ORM API
+## Layers
 
-New applications can use GitDB directly through `createGitDbDataSource`,
-`defineEntity`, and repository methods such as `save`, `find`, `findOne`, and
-`delete`. This is intentionally closer to TypeORM's `DataSource` and repository
-shape than to a PostgreSQL-only facade.
+### First-Party API
 
-The ORM API still executes through the same local runtime and transaction
-executor as raw SQL. It is a convenience surface over the storage engine, not a
-separate persistence path.
+`createGitDbDataSource` opens a runtime over a selected store. `defineEntity`
+declares table metadata, and `GitDbRepository` provides `save`, `find`,
+`findOne`, and `delete`.
 
-## PostgreSQL Facade
+The API intentionally mirrors familiar `DataSource` and repository shapes while
+keeping callers close to GitDB's own transaction and storage model.
 
-`gitdb serve` starts a PostgreSQL-compatible TCP server. Existing ORMs keep their
-normal PostgreSQL provider and point their connection string at GitDB.
+### SQL Engine
 
-The facade handles startup, simple queries, prepared parse/bind/execute flows,
-row descriptions, data rows, and command completion messages.
+`GitDbEngine` owns local execution. It handles schema mutations, row mutations,
+queries, joins, grouping, ordering, aggregate results, transaction execution, and
+manifest updates.
 
-## SQL Engine
+Single-statement mutations are serialized through an internal queue. Explicit
+multi-statement work uses `engine.transaction()`, runs on an isolated database
+copy, and persists only after the callback succeeds.
 
-The current engine uses `alasql` for advanced SQL execution, including joins,
-grouping, ordering, and aggregates. PostgreSQL-flavored SQL is normalized before
-execution so common ORM-generated SQL can run.
+### Storage Providers
 
-Unsupported PostgreSQL features return explicit errors instead of falling back
-silently.
+GitDB stores committed state through the `GitDbStore` interface:
 
-Mutations are serialized through a single-engine transaction queue. A
-single-statement mutation uses the hot local database directly, then persists the
-mutation segment and manifest. If persistence fails, the engine restores the last
-committed manifest state before returning the error. Explicit multi-statement
-transactions still run against an isolated in-memory database clone and swap the
-live database only after all segments and the manifest persist successfully. The
-manifest is updated in memory only after the durable manifest write succeeds, so
-a later mutation cannot publish orphan segments from a failed transaction.
+- `LocalEncryptedStore`
+- `LocalPlaintextStore`
+- `GitHubEncryptedStore`
+- `GitHubPlaintextStore`
 
-## Storage Engine
+Stores persist the manifest and mutation log. Plaintext stores can also write
+visible table snapshots for inspection and faster reopen paths.
 
-GitDB persists schema and data changes as mutation segments plus a manifest:
+### Recovery Boundary
 
-```text
-gitdb/v1/manifest.json or manifest.enc
-gitdb/v1/log/<sequence>.json or <sequence>.enc
+The manifest sequence is the committed boundary. On open, GitDB restores a
+matching visible snapshot when one exists; otherwise it replays log segments in
+manifest order.
+
+If persistence fails after a local mutation, the engine restores the previous
+committed manifest state before returning the error.
+
+## Transaction Model
+
+GitDB currently provides a single-process write queue. It prevents in-process
+write interleaving and makes commit order explicit.
+
+The current model does not claim mature distributed concurrency. Multi-process
+writers still need stronger remote locking or compare-and-swap semantics before
+GitDB can be treated as a high-concurrency OLTP system.
+
+## Snapshot Policy
+
+Visible snapshots can be written on every mutation or at an interval:
+
+```ts
+await GitDbEngine.open({
+  snapshotPolicy: { mode: "interval", mutations: 100 },
+  store,
+})
 ```
 
-On startup, the engine restores a visible snapshot when its checkpoint sequence
-matches the manifest. Otherwise it reads the manifest and replays the mutation
-log into the hot query engine. This avoids GitHub round-trips during query
-execution.
+Interval snapshots reduce write amplification in plaintext mode. The mutation
+log remains the source of truth between checkpoints.
 
-Plaintext visible snapshots are dashboard artifacts and cold-start checkpoints.
-They can be written every mutation for maximum visibility or throttled by
-mutation interval for faster local workloads. Snapshot table files are written
-before `snapshot.json`; the checkpoint is the final marker that lets the engine
-trust a visible snapshot. Once a manifest has committed mutations, visible files
-without a checkpoint are ignored and the mutation log is replayed instead.
+## App Runtime Example
 
-## GitHub Provider
+```ts
+const Person = defineEntity({
+  tableName: "people",
+  primaryKey: "id",
+  columns: { id: "STRING", name: "STRING", team_id: "STRING" },
+})
 
-The GitHub provider uses the Repository Contents API to read and create/update
-encrypted segment files. Existing file `sha` values are used for optimistic
-concurrency when updating files.
+const dataSource = await createGitDbDataSource({
+  entities: [Person],
+  store: new LocalPlaintextStore({ root: ".gitdb" }),
+  synchronize: true,
+})
 
-GitHub is the durable sync layer. Query execution stays local for acceptable
-latency.
+await dataSource.getRepository(Person).save({
+  id: "p1",
+  name: "Lin",
+  team_id: "storage",
+})
+```
 
-Public deployments should write encrypted database objects to a branch that is
-separate from the application branch. The current release uses `main` for source
-code and `data` for encrypted `gitdb/v1` objects. This keeps public storage
-opaque while avoiding auto-deploy loops from database writes.
+## Deployment Shape
 
-## Deployment Boundary
+GitDB is packaged as a library and CLI. A production application should open a
+store inside its own process, keep `GITDB_KEY` in that process environment when
+encrypted mode is enabled, and choose whether remote GitHub sync is local-only,
+background, or blocking for the workflow.
 
-`pnpm start` launches the HTTP control plane and the PostgreSQL-compatible TCP
-facade in one process. HTTP deployments can verify readiness through `/` or
-`/health`. ORM clients still need TCP access to the facade port. When the deploy
-target only exposes HTTP ingress, run `gitdb serve` near the ORM process and use
-GitHub as the shared encrypted durability layer.
+The Dockerfile builds the package and defaults to `gitdb check`, which verifies
+that the configured store can be opened.
+
+## Performance Direction
+
+The current hot path is local. The next work is storage-engine work:
+
+- Batch repository writes into one transaction
+- Add page-level visible snapshots instead of whole-table rewrites
+- Add primary and secondary indexes
+- Compact mutation logs
+- Batch Git object writes instead of writing one Contents API object per mutation
+- Add explicit `fast` and `strong` durability modes
+
+This keeps GitDB differentiated as a repository-backed runtime instead of a
+network adapter over files.

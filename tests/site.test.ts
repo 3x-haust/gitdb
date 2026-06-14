@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises"
 import { describe, expect, it } from "vitest"
 
 type BenchmarkEvidence = {
-  readonly comparisons: readonly unknown[]
-  readonly headline: string
+  readonly comparisons?: readonly unknown[]
+  readonly scenarios: readonly unknown[]
 }
 
 describe("website", () => {
@@ -14,8 +14,7 @@ describe("website", () => {
     if (!isBenchmarkEvidence(parsed)) {
       throw new Error("invalid benchmark evidence")
     }
-    expect(parsed.comparisons.length).toBeGreaterThan(0)
-    expect(parsed.headline).toContain("Local plaintext")
+    expect(parsed.scenarios.length).toBeGreaterThan(0)
   })
 
   it("deploys the site directory through GitHub Pages", async () => {
@@ -25,8 +24,8 @@ describe("website", () => {
 
     expect(workflow).toContain("path: site")
     expect(app).toContain("./benchmark.json")
-    expect(index).toContain("A database runtime that treats a GitHub repo as durable storage")
-    expect(index).toContain("GitDB is not a database file uploaded to GitHub")
+    expect(index).toContain("GitHub Repo + DB Runtime")
+    expect(index).toContain("A runtime, log, and snapshot system over repository storage")
     expect(index).toContain("./assets/runtime-map.svg")
   })
 })
@@ -35,9 +34,7 @@ function isBenchmarkEvidence(value: unknown): value is BenchmarkEvidence {
   return (
     typeof value === "object" &&
     value !== null &&
-    "comparisons" in value &&
-    Array.isArray(value.comparisons) &&
-    "headline" in value &&
-    typeof value.headline === "string"
+    "scenarios" in value &&
+    Array.isArray(value.scenarios)
   )
 }

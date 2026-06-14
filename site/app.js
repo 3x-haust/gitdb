@@ -3,15 +3,8 @@ const numberFormatter = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 0,
 })
 
-const percentFormatter = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 1,
-  minimumFractionDigits: 1,
-  signDisplay: "always",
-})
-
-const fallbackData = {
-  comparisons: [],
-  headline: "Run pnpm benchmark:compare to refresh benchmark evidence",
+const emptyBenchmarkData = {
+  scenarios: [],
 }
 
 render(await loadBenchmark())
@@ -20,60 +13,67 @@ async function loadBenchmark() {
   try {
     const response = await fetch("./benchmark.json", { cache: "no-store" })
     if (!response.ok) {
-      return fallbackData
+      return emptyBenchmarkData
     }
     return await response.json()
   } catch {
-    return fallbackData
+    return emptyBenchmarkData
   }
 }
 
 function render(data) {
-  const local = data.comparisons.find((item) => item.key === "local plaintext")
-  setText("hero-speedup", formatRatio(local?.writeSpeedup))
-  setText("hero-current-wps", formatNumber(local?.current.writesPerSecond))
-  setText("hero-baseline-wps", formatNumber(local?.baseline.writesPerSecond))
-  renderRows(data.comparisons)
-  renderBars(data.comparisons)
+  const scenarios = data.scenarios ?? []
+  const raw = scenarios.find((s) => s.key === "local-plaintext")
+  const orm = scenarios.find((s) => s.key === "orm-local-plaintext")
+  setText("hero-raw-wps", formatNumber(raw?.writesPerSecond))
+  setText("hero-orm-wps", formatNumber(orm?.writesPerSecond))
+  setText(
+    "hero-join-ms",
+    raw?.joinMs !== undefined ? `${numberFormatter.format(raw.joinMs)} ms` : "n/a",
+  )
+  renderRows(scenarios)
+  renderBars(scenarios)
 }
 
-function renderRows(comparisons) {
+function renderRows(scenarios) {
   const target = document.getElementById("benchmark-rows")
   if (target === null) {
     return
   }
   target.replaceChildren()
-  if (comparisons.length === 0) {
+  if (scenarios.length === 0) {
     const row = document.createElement("tr")
     row.append(tableCell("Benchmark evidence pending", "left"))
     row.append(tableCell("n/a"))
     row.append(tableCell("n/a"))
     row.append(tableCell("n/a"))
+    row.append(tableCell("n/a"))
     target.append(row)
     return
   }
-  for (const item of comparisons) {
+  for (const item of scenarios) {
     const row = document.createElement("tr")
-    row.append(tableCell(item.scenario, "left"))
-    row.append(tableCell(formatNumber(item.baseline.writesPerSecond)))
-    row.append(tableCell(formatNumber(item.current.writesPerSecond)))
-    row.append(tableCell(formatPercent(item.writesPerSecondChangePct)))
+    row.append(tableCell(item.label, "left"))
+    row.append(tableCell(formatNumber(item.writesPerSecond)))
+    row.append(tableCell(`${formatNumber(item.writeMs)} ms`))
+    row.append(tableCell(`${formatNumber(item.joinMs)} ms`))
+    row.append(tableCell(item.reopenMs > 0 ? `${formatNumber(item.reopenMs)} ms` : "—"))
     target.append(row)
   }
 }
 
-function renderBars(comparisons) {
+function renderBars(scenarios) {
   const target = document.getElementById("chart-bars")
   if (target === null) {
     return
   }
   target.replaceChildren()
-  const max = maxThroughput(comparisons)
+  const max = scenarios.reduce((m, s) => Math.max(m, s.writesPerSecond ?? 0), 0)
   if (max === 0) {
     target.append(emptyState())
     return
   }
-  for (const item of comparisons) {
+  for (const item of scenarios) {
     target.append(barRow(item, max))
   }
 }
@@ -84,13 +84,12 @@ function barRow(item, max) {
 
   const label = document.createElement("div")
   label.className = "bar-label"
-  label.append(span(item.scenario))
-  label.append(span(formatPercent(item.writesPerSecondChangePct)))
+  label.append(span(item.label))
+  label.append(span(`${formatNumber(item.writesPerSecond)} w/s`))
 
   const bars = document.createElement("div")
   bars.className = "bars"
-  bars.append(bar("previous", item.baseline.writesPerSecond, max))
-  bars.append(bar("current", item.current.writesPerSecond, max))
+  bars.append(bar(item.key, item.writesPerSecond, max))
 
   row.append(label)
   row.append(bars)
@@ -99,7 +98,7 @@ function barRow(item, max) {
 
 function bar(kind, value, max) {
   const element = document.createElement("div")
-  element.className = `bar ${kind}`
+  element.className = `bar ${kind === "orm-local-plaintext" ? "orm" : "current"}`
   element.style.width = `${Math.max(4, (value / max) * 100)}%`
   return element
 }
@@ -125,12 +124,6 @@ function emptyState() {
   return element
 }
 
-function maxThroughput(comparisons) {
-  return comparisons.reduce((max, item) => {
-    return Math.max(max, item.baseline.writesPerSecond, item.current.writesPerSecond)
-  }, 0)
-}
-
 function setText(id, value) {
   const element = document.getElementById(id)
   if (element !== null) {
@@ -140,12 +133,4 @@ function setText(id, value) {
 
 function formatNumber(value) {
   return typeof value === "number" ? numberFormatter.format(value) : "n/a"
-}
-
-function formatPercent(value) {
-  return typeof value === "number" ? `${percentFormatter.format(value)}%` : "n/a"
-}
-
-function formatRatio(value) {
-  return typeof value === "number" ? `${numberFormatter.format(value)}x` : "n/a"
 }

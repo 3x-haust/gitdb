@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { GitDbOrmError } from "../errors.js"
-import { GitDbEngine, type GitDbTransaction } from "../sql/engine.js"
+import { GitDbEngine, type GitDbTransaction, type SnapshotPolicy } from "../sql/engine.js"
 import { sqlLiteral } from "../sql/rows.js"
 import type { GitDbStore } from "../storage/store.js"
 import type { JsonPrimitive, SqlRow } from "../types.js"
@@ -9,18 +9,24 @@ const GitDbColumnTypes = ["STRING", "INT", "FLOAT", "BOOL"] as const
 
 export type GitDbColumnType = (typeof GitDbColumnTypes)[number]
 
-export type EntityDefinition<Row extends object> = {
+export type GitDbEntityDefinition = {
+  readonly columns: Readonly<Record<string, GitDbColumnType>>
+  readonly primaryKey: string
+  readonly tableName: string
+}
+
+export type EntityDefinition<Row extends object> = GitDbEntityDefinition & {
   readonly columns: { readonly [Key in Extract<keyof Row, string>]: GitDbColumnType }
   readonly primaryKey: Extract<keyof Row, string>
-  readonly tableName: string
 }
 
 export type FindOptions<Row extends object> = {
   readonly where?: Partial<Record<Extract<keyof Row, string>, JsonPrimitive>>
 }
 
-export type GitDbDataSourceOptions<Row extends object> = {
-  readonly entities: readonly EntityDefinition<Row>[]
+export type GitDbDataSourceOptions = {
+  readonly entities: readonly GitDbEntityDefinition[]
+  readonly snapshotPolicy?: SnapshotPolicy
   readonly store: GitDbStore
   readonly synchronize?: boolean
 }
@@ -43,10 +49,16 @@ export function defineEntity<Row extends object>(
   return definition
 }
 
-export async function createGitDbDataSource<Row extends object>(
-  options: GitDbDataSourceOptions<Row>,
+export async function createGitDbDataSource(
+  options: GitDbDataSourceOptions,
 ): Promise<GitDbDataSource> {
-  const engine = await GitDbEngine.open({ store: options.store })
+  const engine =
+    options.snapshotPolicy === undefined
+      ? await GitDbEngine.open({ store: options.store })
+      : await GitDbEngine.open({
+          snapshotPolicy: options.snapshotPolicy,
+          store: options.store,
+        })
   const dataSource = new GitDbDataSource(engine)
   if (options.synchronize === true) {
     for (const entity of options.entities) {
@@ -71,7 +83,7 @@ export class GitDbDataSource {
     return new GitDbRepository(this.#engine, entity)
   }
 
-  async synchronize<Row extends object>(entity: EntityDefinition<Row>): Promise<void> {
+  async synchronize(entity: GitDbEntityDefinition): Promise<void> {
     await this.#engine.execute(createTableSql(entity))
   }
 
@@ -115,7 +127,7 @@ export class GitDbRepository<Row extends object> {
   }
 }
 
-function createTableSql<Row extends object>(entity: EntityDefinition<Row>): string {
+function createTableSql(entity: GitDbEntityDefinition): string {
   const columns = Object.entries(entity.columns)
     .map(([name, type]) => `${identifier(name)} ${type}`)
     .join(", ")

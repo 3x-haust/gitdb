@@ -5,8 +5,6 @@ const EnvSchema = z.object({
   GITDB_ENCRYPTION: z.enum(["on", "off"]).default("on"),
   GITDB_KEY: z.string().min(1).optional(),
   GITDB_ROOT: z.string().default(".gitdb"),
-  GITDB_HOST: z.string().default("127.0.0.1"),
-  GITDB_PORT: z.coerce.number().int().min(0).max(65_535).default(7432),
 })
 
 export type GitDbEnv = z.infer<typeof EnvSchema>

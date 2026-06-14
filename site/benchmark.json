@@ -14,21 +14,21 @@
         "writesPerSecond": 173.14
       },
       "current": {
-        "joinMs": 3.2837920000000054,
+        "joinMs": 4.881749999999954,
         "label": "local plaintext throttled visible snapshots",
-        "reopenMs": 47.42029099999999,
+        "reopenMs": 77.61854200000005,
         "rows": 250,
-        "writeMs": 97.552042,
-        "writesPerSecond": 2562.7346683322116
+        "writeMs": 146.747167,
+        "writesPerSecond": 1703.6104008740422
       },
-      "joinMsChangePct": 90.04006066120715,
+      "joinMsChangePct": 85.19335759781633,
       "key": "local plaintext",
-      "reopenMsChangePct": 66.14045626561943,
+      "reopenMsChangePct": 44.57797786504817,
       "rows": 250,
       "scenario": "local plaintext throttled visible snapshots",
-      "writeMsChangePct": 93.24385054366647,
-      "writeSpeedup": 14.801517086359084,
-      "writesPerSecondChangePct": 1380.1517086359086
+      "writeMsChangePct": 89.83674998268579,
+      "writeSpeedup": 9.839496366374277,
+      "writesPerSecondChangePct": 883.9496366374277
     },
     {
       "baseline": {
@@ -40,53 +40,56 @@
         "writesPerSecond": 328.09
       },
       "current": {
-        "joinMs": 0.865791999999999,
+        "joinMs": 1.1787500000000364,
         "label": "local encrypted mutation log",
-        "reopenMs": 45.26150000000001,
+        "reopenMs": 78.30991699999993,
         "rows": 250,
-        "writeMs": 97.225708,
-        "writesPerSecond": 2571.3363794686893
+        "writeMs": 234.367166,
+        "writesPerSecond": 1066.7023212628683
       },
-      "joinMsChangePct": 79.91201856148494,
+      "joinMsChangePct": 72.65081206496436,
       "key": "local encrypted",
-      "reopenMsChangePct": 85.96586152367368,
+      "reopenMsChangePct": 75.71860810517505,
       "rows": 250,
       "scenario": "local encrypted mutation log",
-      "writeMsChangePct": 87.2405532881009,
-      "writeSpeedup": 7.837289705473161,
-      "writesPerSecondChangePct": 683.7289705473161
-    },
-    {
-      "baseline": {
-        "joinMs": 19.74,
-        "label": "postgres facade over local encrypted",
-        "reopenMs": 0,
-        "rows": 250,
-        "writeMs": 987.93,
-        "writesPerSecond": 253.05
-      },
-      "current": {
-        "joinMs": 2.3100420000000668,
-        "label": "postgres facade over local encrypted",
-        "reopenMs": 0,
-        "rows": 250,
-        "writeMs": 148.463792,
-        "writesPerSecond": 1683.9122632675312
-      },
-      "joinMsChangePct": 88.29765957446774,
-      "key": "postgres facade",
-      "reopenMsChangePct": null,
-      "rows": 250,
-      "scenario": "postgres facade over local encrypted",
-      "writeMsChangePct": 84.9722356847145,
-      "writeSpeedup": 6.65446458513152,
-      "writesPerSecondChangePct": 565.446458513152
+      "writeMsChangePct": 69.24275042979566,
+      "writeSpeedup": 3.251249112325485,
+      "writesPerSecondChangePct": 225.1249112325485
     }
   ],
   "current": {
     "label": "current working tree",
     "source": ".gitdb/bench-current.json"
   },
-  "generatedAt": "2026-06-13T16:15:58.844Z",
-  "headline": "Local plaintext writes are 14.80x of the previous documented run"
+  "generatedAt": "2026-06-14T01:35:43.313Z",
+  "headline": "Local plaintext writes are 9.84x of the previous documented run",
+  "scenarios": [
+    {
+      "joinMs": 4.881749999999954,
+      "label": "local plaintext throttled visible snapshots",
+      "reopenMs": 77.61854200000005,
+      "rows": 250,
+      "writeMs": 146.747167,
+      "writesPerSecond": 1703.6104008740422,
+      "key": "local-plaintext"
+    },
+    {
+      "joinMs": 1.1787500000000364,
+      "label": "local encrypted mutation log",
+      "reopenMs": 78.30991699999993,
+      "rows": 250,
+      "writeMs": 234.367166,
+      "writesPerSecond": 1066.7023212628683,
+      "key": "local-encrypted"
+    },
+    {
+      "joinMs": 1.30266599999959,
+      "label": "orm local plaintext",
+      "reopenMs": 136.289667,
+      "rows": 250,
+      "writeMs": 5377.3372500000005,
+      "writesPerSecond": 46.49141171125169,
+      "key": "orm-local-plaintext"
+    }
+  ]
 }

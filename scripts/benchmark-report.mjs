@@ -44,6 +44,7 @@ export function buildBenchmarkEvidence({
     },
     generatedAt: new Date().toISOString(),
     headline: headline(comparisons),
+    scenarios: current.map((row) => ({ ...row, key: siteScenarioKey(row.label) })),
   }
 }
 
@@ -149,14 +150,14 @@ function compareRows(key, baselineRow, currentRow) {
 
 function scenarioKey(label) {
   const normalized = label.toLowerCase()
+  if (normalized.startsWith("orm local plaintext")) {
+    return "orm local plaintext"
+  }
   if (normalized.startsWith("local plaintext")) {
     return "local plaintext"
   }
   if (normalized.startsWith("local encrypted")) {
     return "local encrypted"
-  }
-  if (normalized.startsWith("postgres facade")) {
-    return "postgres facade"
   }
   if (normalized.startsWith("github plaintext")) {
     return "github plaintext"
@@ -164,7 +165,17 @@ function scenarioKey(label) {
   return normalized
 }
 
+function siteScenarioKey(label) {
+  return scenarioKey(label).replaceAll(/\s+/g, "-")
+}
+
 function headline(comparisons) {
+  const orm = comparisons.find((row) => row.key === "orm local plaintext")
+  const raw = comparisons.find((row) => row.key === "local plaintext")
+  if (orm !== undefined && raw !== undefined) {
+    const overhead = ratio(raw.current.writesPerSecond, orm.current.writesPerSecond)
+    return `Raw engine is ${formatRatio(overhead)} of ORM writes/s (save() transaction overhead)`
+  }
   const localPlaintext = comparisons.find((row) => row.key === "local plaintext")
   if (localPlaintext === undefined) {
     return "Benchmark comparison generated"

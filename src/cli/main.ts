@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { Command } from "commander"
 import pino from "pino"
-import { createGitDbServer } from "../protocol/postgres-server.js"
 import { GitDbEngine } from "../sql/engine.js"
 import { generateKey } from "./keygen.js"
 import { createStoreFromEnv } from "./store-factory.js"
@@ -10,7 +9,7 @@ const logger = pino({ level: process.env["LOG_LEVEL"] ?? "info" })
 
 const program = new Command()
   .name("gitdb")
-  .description("GitHub-native encrypted database with a PostgreSQL-compatible facade")
+  .description("GitHub-native database runtime with local execution and auditable storage")
   .version("0.1.0")
 
 program
@@ -21,24 +20,14 @@ program
   })
 
 program
-  .command("serve")
-  .description("Start the PostgreSQL-compatible facade")
-  .option("--host <host>", "host to bind")
-  .option("--port <port>", "port to bind")
-  .action(async (options: { readonly host?: string; readonly port?: string }) => {
-    const { env, mode, store } = createStoreFromEnv(process.env)
+  .command("query")
+  .description("Execute one GitDB SQL statement against the configured store")
+  .argument("<sql...>", "SQL statement")
+  .action(async (sqlParts: readonly string[]) => {
+    const { store } = createStoreFromEnv(process.env)
     const engine = await GitDbEngine.open({ store })
-    const port = options.port === undefined ? env.GITDB_PORT : Number.parseInt(options.port, 10)
-    const host = options.host ?? env.GITDB_HOST
-    const server = await createGitDbServer({ engine, host, port })
-    logger.info(
-      {
-        host: server.host,
-        mode,
-        port: server.port,
-      },
-      "gitdb postgres facade listening",
-    )
+    const result = await engine.execute(sqlParts.join(" "))
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`)
   })
 
 program

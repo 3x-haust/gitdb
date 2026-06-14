@@ -1,97 +1,80 @@
 # GitDB Benchmarks
 
-Benchmarks are intentionally split between local engine speed and GitHub sync
+Benchmarks are split between raw local engine speed and first-party repository
 speed. GitDB should feel fast because queries run against the local SQL engine;
 GitHub is the durable sync layer, not the per-query hot path.
 
 ## Environment
 
 - Date: 2026-06-14 KST
-- Machine: macOS 26.5.1 arm64, Node.js 24.11.0
-- Command: `GITDB_BENCH_ROWS=250 pnpm benchmark:compare`
-- JSON evaluator: `GITDB_BENCH_OUTPUT=.gitdb/bench-current.json pnpm benchmark:evaluate`
-- Baseline: `HEAD~1:docs/BENCHMARKS.md`
-- Site evidence: `site/benchmark.json`
+- Machine: macOS arm64
+- Command: `GITDB_BENCH_ROWS=250 corepack pnpm benchmark:compare`
 - Workload: create `teams` and `people`, insert rows, execute a join, reopen
   the store where applicable.
 
-## Current Local Results
+## Current Results
 
 | Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| local plaintext throttled visible snapshots | 250 | 97.55 | 2562.73 | 3.28 | 47.42 |
-| local encrypted mutation log | 250 | 97.23 | 2571.34 | 0.87 | 45.26 |
-| postgres facade over local encrypted | 250 | 148.46 | 1683.91 | 2.31 | 0.00 |
+| local plaintext throttled visible snapshots | 250 | 146.75 | 1703.61 | 4.88 | 77.62 |
+| local encrypted mutation log | 250 | 234.37 | 1066.70 | 1.18 | 78.31 |
+| orm local plaintext | 250 | 5377.34 | 46.49 | 1.30 | 136.29 |
 
-## Previous-Version Comparison
+## Previous Local Run
 
-| Scenario | Previous writes/s | Current writes/s | Change | Write ms change | Join ms change |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| local plaintext throttled visible snapshots | 173.14 | 2562.73 | +1380.15% | +93.24% | +90.04% |
-| local encrypted mutation log | 328.09 | 2571.34 | +683.73% | +87.24% | +79.91% |
-| postgres facade over local encrypted | 253.05 | 1683.91 | +565.45% | +84.97% | +88.30% |
+The previous documented local engine results were:
+
+| Scenario | Previous writes/s | Current writes/s | Change |
+| --- | ---: | ---: | ---: |
+| local plaintext visible snapshots | 173.14 | 1703.61 | +883.95% |
+| local encrypted mutation log | 328.09 | 1066.70 | +225.12% |
+
+The comparison is intentionally limited to the local engine scenarios that still
+exist in the first-party runtime. Retired network-server numbers are no longer
+part of the public benchmark surface.
+
+## ORM Overhead
+
+The raw engine inserts rows with direct SQL statements. `GitDbRepository.save()`
+is safer but slower because it runs an upsert-style flow:
+
+1. `DELETE FROM table WHERE pk = ?`
+2. `INSERT INTO table (...) VALUES (...)`
+3. Both statements inside a transaction
+
+For bulk inserts today, prefer `dataSource.query()` with direct SQL. The roadmap
+adds `repository.insert()` and `repository.saveMany()` so repository code can
+batch rows without paying one transaction per row.
 
 ## Historical GitHub Contents API
 
-This was not rerun during the local performance pass. It remains the historical
-remote-write reference from 2026-06-09 KST:
-
-| Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| github plaintext contents api | 2 | 14157.49 | 0.14 | 6.70 | 1812.62 |
-
-## Interpretation
-
-Local writes are now fast enough for examples, demos, and low-frequency project
-data. The hot-path improvement is storage-engine shaped: a single-statement
-mutation no longer clones and restores the whole in-memory database before every
-write. It mutates the live local engine, persists through the manifest-gated log,
-and restores committed state if persistence fails. Explicit multi-statement
-transactions still use an isolated transaction database for rollback.
-
-The first-party ORM API avoids the PostgreSQL wire hop for new apps, while the
-facade remains useful for existing clients. Visible snapshots are checkpointed
-instead of being rewritten on every local plaintext mutation.
-
-GitHub Contents API writes are not acceptable as the hot write path. The current
-GitHub plaintext mode writes multiple files per SQL mutation: log segment,
-manifest, visible schema, and visible data. During benchmarking, GitHub also
-returned transient 500/502 responses under repeated Contents API writes. GitDB
-now retries those transient write failures, but the result confirms that direct
-per-mutation GitHub writes are a demo path, not the final architecture.
+GitHub Contents API writes are not acceptable as the hot write path. GitDB keeps
+query execution local and treats GitHub as remote durable storage and reviewable
+history. Direct per-mutation remote writes are useful for demos and correctness
+testing, not for high-throughput writes.
 
 ## Performance Plan
 
-1. Add a local write buffer.
-   Return success after local WAL fsync in `fast` mode, then sync GitHub in the
-   background.
+1. Add batch repository writes.
+   `saveMany()` should persist many entities through one transaction.
 
-2. Batch GitHub commits.
-   Replace per-file Contents API writes with Git Database tree commits, so one
-   transaction can update log, manifest, indexes, and visible snapshots in a
-   single Git commit.
+2. Add page-level visible snapshots.
+   Plaintext mode should update changed pages instead of rewriting whole tables.
 
-3. Snapshot less often.
-   Keep mutation logs per write, but refresh visible `table/data.json` on a
-   timer, row threshold, or explicit `gitdb sync` command.
+3. Add indexes.
+   Maintain primary and secondary indexes in the local runtime so joins and
+   filters avoid full scans.
 
-4. Write table deltas.
-   Store public rows as `table/rows/<primary-key>.json` or chunked pages, then
-   rebuild `data.json` as a dashboard artifact. This avoids rewriting the whole
-   table for every insert.
+4. Compact logs.
+   Merge old mutation segments into periodic checkpoints.
 
-5. Add local indexes.
-   Maintain primary and secondary indexes in local cache so joins and filters do
-   not scan every visible row.
+5. Batch Git sync.
+   Replace repeated Contents API writes with Git object tree commits.
 
-6. Add cold-start manifests.
-   Include table snapshot versions in `manifest.json` so startup can skip
-   directory listing and unchanged table reads.
-
-7. Separate durability modes.
+6. Add durability modes.
    Keep `fast` as local-durable/background-GitHub and add `strong` for blocking
-   until the GitHub commit lands.
+   until the remote commit lands.
 
-8. Add benchmark gates.
-   Track local 1k/10k row writes, joins, reopen time, GitHub 10-row sync, and
-   GitHub batch sync once tree commits land.
+7. Add benchmark gates.
+   Track local 1k/10k row writes, repository bulk vs single-row writes, joins,
+   reopen time, and remote batch sync once tree commits land.

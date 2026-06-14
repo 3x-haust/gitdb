@@ -44,8 +44,9 @@
       "!dist",
       "!coverage",
       "!.gitdb-example-public",
-      "!.omx",
-      "!examples/express-prisma/generated"
+      "!.claude",
+      "!.omc",
+      "!.omx"
     ]
   },
   "overrides": [

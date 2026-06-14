@@ -1,51 +1,70 @@
 import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Client } from "pg"
-import { afterEach, describe, expect, it } from "vitest"
+import { describe, expect, it } from "vitest"
 import { createAesGcmCipher } from "../src/crypto/aes-gcm.js"
-import { createGitDbServer } from "../src/protocol/postgres-server.js"
-import { GitDbEngine } from "../src/sql/engine.js"
+import { createGitDbDataSource, defineEntity } from "../src/orm/index.js"
 import { LocalEncryptedStore } from "../src/storage/local-encrypted-store.js"
 
-describe("PostgreSQL facade", () => {
-  const servers: { readonly close: () => Promise<void> }[] = []
+type Team = {
+  readonly id: string
+  readonly name: string
+}
 
-  afterEach(async () => {
-    // Given: test servers may have been started by a scenario.
-    const pending = servers.splice(0, servers.length)
+type Person = {
+  readonly id: string
+  readonly name: string
+  readonly team_id: string
+}
 
-    // When: the scenario ends.
-    await Promise.all(pending.map((server) => server.close()))
+const TeamEntity = defineEntity<Team>({
+  columns: {
+    id: "STRING",
+    name: "STRING",
+  },
+  primaryKey: "id",
+  tableName: "teams",
+})
 
-    // Then: no server leaks into the next E2E run.
-    expect(servers).toHaveLength(0)
-  })
+const PersonEntity = defineEntity<Person>({
+  columns: {
+    id: "STRING",
+    name: "STRING",
+    team_id: "STRING",
+  },
+  primaryKey: "id",
+  tableName: "people",
+})
 
-  it("accepts a pg client and executes join queries through postgres://", async () => {
-    // Given: a GitDB PostgreSQL-compatible server backed by encrypted GitDB files.
-    const root = await mkdtemp(join(tmpdir(), "gitdb-pg-"))
+describe("GitDB first-party runtime", () => {
+  it("writes through repositories, joins through the engine, and reopens encrypted state", async () => {
+    // Given: a GitDB data source backed by encrypted local storage.
+    const root = await mkdtemp(join(tmpdir(), "gitdb-runtime-"))
     const key = Buffer.alloc(32, 3).toString("base64url")
-    const store = new LocalEncryptedStore({ root, cipher: createAesGcmCipher(key) })
-    const engine = await GitDbEngine.open({ store })
-    const server = await createGitDbServer({ engine, host: "127.0.0.1", port: 0 })
-    servers.push(server)
-    const client = new Client({
-      connectionString: `postgresql://127.0.0.1:${server.port}/main`,
+    const cipher = createAesGcmCipher(key)
+    const entities = [TeamEntity, PersonEntity]
+    const dataSource = await createGitDbDataSource({
+      entities,
+      store: new LocalEncryptedStore({ cipher, root }),
+      synchronize: true,
     })
 
-    // When: an ordinary Postgres client drives schema, writes, and a relation join.
-    await client.connect()
-    await client.query("CREATE TABLE teams (id STRING, name STRING)")
-    await client.query("CREATE TABLE people (id STRING, name STRING, team_id STRING)")
-    await client.query("INSERT INTO teams VALUES ('t1', 'Storage')")
-    await client.query("INSERT INTO people VALUES ('p1', 'Lin', 't1')")
-    const result = await client.query(
+    // When: an app uses first-party repositories and SQL on the same runtime.
+    await dataSource.getRepository(TeamEntity).save({ id: "t1", name: "Storage" })
+    await dataSource.getRepository(PersonEntity).save({ id: "p1", name: "Lin", team_id: "t1" })
+    const joined = await dataSource.query(
       "SELECT people.name AS person, teams.name AS team FROM people JOIN teams ON people.team_id = teams.id",
     )
-    await client.end()
+    const reopened = await createGitDbDataSource({
+      entities,
+      store: new LocalEncryptedStore({ cipher: createAesGcmCipher(key), root }),
+      synchronize: false,
+    })
 
-    // Then: the ORM-facing surface behaves like a PostgreSQL connection.
-    expect(result.rows).toEqual([{ person: "Lin", team: "Storage" }])
+    // Then: the runtime behaves as one database across repository, query, and reopen paths.
+    expect(joined).toEqual([{ person: "Lin", team: "Storage" }])
+    await expect(reopened.getRepository(PersonEntity).find()).resolves.toEqual([
+      { id: "p1", name: "Lin", team_id: "t1" },
+    ])
   })
 })

@@ -6,8 +6,9 @@
     <title>GitDB - GitHub-backed database runtime</title>
     <meta
       name="description"
-      content="GitDB is a local database runtime with auditable GitHub storage, transaction sequencing, snapshots, and ORM-friendly APIs."
+      content="GitDB is a local database runtime with auditable GitHub storage, transaction sequencing, snapshots, and a first-party ORM."
     />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -17,7 +18,7 @@
         <span>GitDB</span>
       </a>
       <nav class="nav" aria-label="Primary navigation">
-        <a href="#explain">Explain</a>
+        <a href="#tradeoffs">Trade-offs</a>
         <a href="#benchmarks">Benchmarks</a>
         <a href="#runtime">Runtime</a>
         <a href="#orm">ORM</a>
@@ -31,7 +32,7 @@
           <p class="eyebrow">GitHub Repo + DB Runtime</p>
           <h1>GitDB</h1>
           <p class="lede">
-            A local SQL engine and TypeORM-style repository API over durable,
+            A local SQL engine and first-party repository API over durable,
             auditable GitHub storage. GitHub is the storage and audit trail; the
             hot path stays local.
           </p>
@@ -45,16 +46,16 @@
           </div>
           <dl class="metric-strip">
             <div>
-              <dt>Local write speed</dt>
-              <dd id="hero-speedup">loading</dd>
+              <dt>Raw writes/s</dt>
+              <dd id="hero-raw-wps">loading</dd>
             </div>
             <div>
-              <dt>Current writes/s</dt>
-              <dd id="hero-current-wps">loading</dd>
+              <dt>ORM writes/s</dt>
+              <dd id="hero-orm-wps">loading</dd>
             </div>
             <div>
-              <dt>Previous writes/s</dt>
-              <dd id="hero-baseline-wps">loading</dd>
+              <dt>Join latency</dt>
+              <dd id="hero-join-ms">loading</dd>
             </div>
           </dl>
         </div>
@@ -66,33 +67,36 @@
         </figure>
       </section>
 
-      <section class="explain" id="explain">
+      <section class="explain" id="tradeoffs">
         <div class="section-heading">
-          <p class="eyebrow">What it is</p>
-          <h2>A database runtime that treats a GitHub repo as durable storage</h2>
+          <p class="eyebrow">Trade-offs</p>
+          <h2>What GitDB is good at — and where it falls short</h2>
           <p>
-            GitDB is not a database file uploaded to GitHub. It keeps query
-            execution local, writes mutation logs and manifests, and uses the
-            repository as a durable, inspectable audit trail.
+            GitDB keeps query execution local and uses GitHub as a durable,
+            inspectable audit trail. That makes it a good fit for some
+            workloads and a poor fit for others.
           </p>
         </div>
         <div class="explain-layout">
           <article class="definition">
-            <h3>Use GitDB when</h3>
+            <h3>Strengths</h3>
             <ul>
-              <li>project data should live in a dedicated repository</li>
-              <li>agents, demos, content tools, or config tools need audit history</li>
-              <li>new apps want a repository API without a separate ORM provider</li>
-              <li>existing clients need a local PostgreSQL-compatible endpoint</li>
+              <li>Every mutation is logged and visible in GitHub history</li>
+              <li>Local query execution — no per-query network round-trip</li>
+              <li>First-party ORM ships with the package, no extra provider needed</li>
+              <li>Encrypted storage option with AES-GCM out of the box</li>
+              <li>Manifest-gated commits with rollback-aware mutation logs</li>
+              <li>Good fit for agents, demos, config tools, and content pipelines</li>
             </ul>
           </article>
           <article class="definition">
-            <h3>Do not use GitDB when</h3>
+            <h3>Limitations</h3>
             <ul>
-              <li>the workload needs high-throughput OLTP today</li>
-              <li>many writers need low-latency distributed transactions</li>
-              <li>full PostgreSQL compatibility is a hard requirement</li>
-              <li>GitHub Contents API writes would sit on the hot path</li>
+              <li>ORM <code>save()</code> is slow — DELETE + INSERT per row in its own transaction (~46 writes/s)</li>
+              <li>GitHub Contents API writes are not a viable hot path</li>
+              <li>Not suited for high-throughput OLTP or concurrent multi-writer workloads</li>
+              <li>Limited SQL subset — not a mature general-purpose OLTP engine yet</li>
+              <li>No secondary indexes yet; joins scan every visible row</li>
             </ul>
           </article>
           <div class="repo-layout">
@@ -110,18 +114,20 @@
 
       <section class="benchmark-band" id="benchmarks">
         <div class="section-heading">
-          <p class="eyebrow">Measured example</p>
-          <h2>Current runtime versus previous documented run</h2>
+          <p class="eyebrow">Measured performance</p>
+          <h2>Local engine vs ORM write throughput</h2>
           <p>
-            The benchmark creates `teams` and `people`, inserts rows, runs a join,
-            and reopens storage where applicable.
+            250 rows, local storage. Raw engine benchmarks use direct SQL
+            execution. ORM benchmark uses <code>repository.save()</code>, which
+            wraps each write in a DELETE + INSERT transaction — the main source
+            of ORM overhead.
           </p>
         </div>
         <div class="benchmark-layout">
-          <div class="chart-panel" aria-label="Write throughput comparison">
+          <div class="chart-panel" aria-label="Write throughput by scenario">
             <div class="chart-axis">
-              <span>previous</span>
-              <span>current</span>
+              <span>slower</span>
+              <span>faster</span>
             </div>
             <div id="chart-bars" class="chart-bars"></div>
           </div>
@@ -130,9 +136,10 @@
               <thead>
                 <tr>
                   <th>Scenario</th>
-                  <th>Previous writes/s</th>
-                  <th>Current writes/s</th>
-                  <th>Change</th>
+                  <th>Writes/s</th>
+                  <th>Write ms</th>
+                  <th>Join ms</th>
+                  <th>Reopen ms</th>
                 </tr>
               </thead>
               <tbody id="benchmark-rows"></tbody>
@@ -144,7 +151,7 @@
       <section class="runtime" id="runtime">
         <div class="section-heading">
           <p class="eyebrow">Storage engine first</p>
-          <h2>Not a SQL facade over a file</h2>
+          <h2>A runtime, log, and snapshot system over repository storage</h2>
         </div>
         <div class="runtime-grid">
           <article>
@@ -165,7 +172,12 @@
       <section class="orm" id="orm">
         <div class="section-heading">
           <p class="eyebrow">First-party ORM</p>
-          <h2>Repository API for new apps, PostgreSQL facade for existing clients</h2>
+          <h2>Repository API for new apps</h2>
+          <p>
+            Define entities, open a data source, and use typed repositories.
+            Each <code>save()</code> is upsert-safe but runs a DELETE + INSERT
+            transaction — use raw <code>dataSource.query()</code> for bulk inserts.
+          </p>
         </div>
         <pre><code>const Person = defineEntity({
   tableName: "people",

@@ -1,8 +1,6 @@
-import alasql from "alasql"
 import { SqlExecutionError } from "../errors.js"
 import type { GitDbStore } from "../storage/store.js"
 import type { GitDbManifest, PersistedMutation, SqlResult } from "../types.js"
-import { maybeCatalogResult } from "./catalog.js"
 import {
   type AlaSqlDatabase,
   createDatabase,
@@ -11,7 +9,7 @@ import {
   restoreSnapshot,
   snapshotFromDatabase,
 } from "./database.js"
-import { commandTag, isMutation, isTransactionControl, normalizePostgresSql } from "./normalize.js"
+import { commandTag, isMutation, isTransactionControl, normalizeGitDbSql } from "./normalize.js"
 import { toRows } from "./rows.js"
 import { EngineTransaction, type GitDbTransaction } from "./transaction.js"
 
@@ -39,7 +37,6 @@ export class GitDbEngine {
     this.#manifest = manifest
     this.#snapshotPolicy = snapshotPolicy
     this.#db = createDatabase()
-    alasql.options.postgres = true
   }
 
   static async open(options: GitDbEngineOptions): Promise<GitDbEngine> {
@@ -69,14 +66,10 @@ export class GitDbEngine {
   }
 
   async execute(sql: string): Promise<SqlResult> {
-    const catalog = maybeCatalogResult(sql)
-    if (catalog !== null) {
-      return catalog
-    }
     if (isTransactionControl(sql)) {
       return { command: commandTag(sql, 0), rowCount: 0, rows: [] }
     }
-    const normalized = normalizePostgresSql(sql)
+    const normalized = normalizeGitDbSql(sql)
     if (isMutation(sql)) {
       return await this.#executeSingleMutation(normalized, sql)
     }
@@ -165,7 +158,7 @@ export class GitDbEngine {
   async #replay(): Promise<void> {
     const mutations = await this.#store.readMutations(this.#manifest.logSegments)
     for (const mutation of mutations) {
-      execOn(this.#db, normalizePostgresSql(mutation.sql), mutation.sql)
+      execOn(this.#db, normalizeGitDbSql(mutation.sql), mutation.sql)
     }
   }
 

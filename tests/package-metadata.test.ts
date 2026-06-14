@@ -32,9 +32,9 @@ describe("npm publish metadata", () => {
     const publish = scripts["publish:dry-run"]
 
     // Then: both commands validate package contents without publishing.
-    expect(pack).toBe("pnpm build && COREPACK_ENABLE_STRICT=0 npm pack --dry-run --json")
+    expect(pack).toBe("corepack pnpm build && COREPACK_ENABLE_STRICT=0 npm pack --dry-run --json")
     expect(publish).toBe(
-      "pnpm build && COREPACK_ENABLE_STRICT=0 npm publish --dry-run --access public",
+      "corepack pnpm build && COREPACK_ENABLE_STRICT=0 npm publish --dry-run --access public",
     )
   })
 })

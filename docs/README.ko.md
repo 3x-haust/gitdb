@@ -2,74 +2,51 @@
 
 [English](../README.md) | 한국어 | [Website](https://3x-haust.github.io/gitdb/)
 
-GitDB는 GitHub repository 하나를 프로젝트 전용 데이터베이스 runtime으로 쓰게
-해주는 GitHub-native database입니다.
-
-query hot path는 로컬입니다. GitDB runtime이 SQL engine에서 query를 실행하고,
-write는 transaction executor를 통해 직렬화한 뒤 manifest, mutation log, visible
-snapshot으로 상태를 저장합니다. GitHub는 매 `SELECT`마다 접근하는 곳이 아니라
-durable/auditable storage layer입니다.
-
-애플리케이션은 GitDB의 first-party TypeORM 스타일 `DataSource`/repository API를
-직접 쓰거나, Prisma와 `pg` 같은 기존 PostgreSQL client용 local TCP facade에
-접속할 수 있습니다.
+GitDB는 프로젝트 데이터를 위한 GitHub 기반 데이터베이스 런타임입니다. 쿼리와
+쓰기의 hot path는 로컬 엔진에서 처리하고, GitHub 저장소는 durable storage와
+audit trail로 사용합니다.
 
 ```text
-GitDB ORM / Prisma / pg
-        |
-        | postgresql://127.0.0.1:7432/main
-        v
-GitDB local runtime
-        |
-        | transaction executor + SQL engine + manifest/log replay
-        v
-GitHub repository
+Application code
+  -> GitDB DataSource / Repository
+  -> Local SQL engine + transaction queue
+  -> Manifest, mutation log, visible snapshots
+  -> GitHub repository for durable history
 ```
 
-GitDB는 SQLite를 GitHub에 올리는 도구가 아닙니다. `.db` 파일을 업로드하지
-않습니다. PostgreSQL facade는 호환 레이어이고, 핵심은 storage engine과 local
-runtime입니다.
+GitDB는 데이터베이스 파일 하나를 GitHub에 올리는 구조가 아닙니다. 핵심은
+storage engine, transaction boundary, replay 가능한 mutation log, snapshot
+모델, 그리고 그 위에 직접 붙는 first-party API입니다.
 
 ## 왜 GitDB인가
 
-GitHub에는 이미 commit, pull request, history, branch, review, public/private
-repo, access control이 있습니다. GitDB는 이 GitHub primitive를 프로젝트 데이터에
-적용합니다.
+다음 상황에 적합합니다:
 
-GitDB가 잘 맞는 경우:
+- 프로젝트마다 별도 database repository를 두고 싶을 때
+- 매 쿼리마다 네트워크 왕복을 만들지 않고 로컬에서 실행하고 싶을 때
+- 패키지에 포함된 TypeORM 스타일 `DataSource`와 repository API가 필요할 때
+- 의도적인 public demo에서 table snapshot을 GitHub에서 바로 보고 싶을 때
+- private data를 encrypted manifest와 mutation log로 저장하고 싶을 때
+- agent memory, demo, content tool, config tool처럼 감사 가능한 기록이 필요한 저빈도 데이터
 
-- 프로젝트마다 전용 데이터베이스 repo를 두고 싶을 때, 예: `my-app-db`
-- 별도 ORM provider 없이 typed repository API를 쓰고 싶을 때
-- Prisma, `pg`, raw SQL client를 PostgreSQL 호환 endpoint로 연결하고 싶을 때
-- public demo 데이터를 GitHub 웹 UI에서 바로 보고 수정하고 싶을 때
-- public/private repo에 데이터를 암호화해서 저장하고 싶을 때
-- agent memory, demo, content tool, config tool, 저빈도 앱 데이터를 commit
-  history로 남기고 싶을 때
+GitDB는 아직 실험 프로젝트입니다. 높은 처리량의 OLTP, 짧은 지연 시간의 다중
+writer, 성숙한 secondary index가 필요한 워크로드에는 아직 적합하지 않습니다.
 
-GitDB가 맞지 않는 경우:
-
-- 고빈도 OLTP
-- 낮은 지연시간의 다중 writer transaction
-- 오늘 당장 완전한 PostgreSQL 호환성이 필요한 서비스
-
-## 기능
+## 현재 표면
 
 | 영역 | 현재 동작 |
 | --- | --- |
-| ORM 접근 | First-party `DataSource`/repository API와 PostgreSQL 스타일 local endpoint |
-| SQL | `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT`, join, group, order, aggregate, 일반적인 raw query 흐름 |
-| Runtime 보장 | single-process transaction queue, manifest-gated log replay, checkpointed visible snapshot |
-| GitHub 저장소 | 데이터베이스마다 전용 repo 사용, 권한이 있으면 최초 write 시 repo 생성 |
-| Public plaintext mode | `table/schema.json`, `table/data.json`을 GitHub에서 직접 확인/수정 |
-| Encrypted mode | AES-256-GCM으로 암호화된 manifest/log 저장 |
-| Local mode | GitHub 변수 없이 로컬 디렉터리에 저장 |
-| Example app | Express + Prisma API가 PostgreSQL facade를 통해 GitDB 사용 |
-| Benchmark | local, facade, GitHub Contents API 벤치마크 명령 포함 |
+| App API | `createGitDbDataSource`, `defineEntity`, typed repository |
+| SQL engine | `CREATE TABLE`, `INSERT`, `DELETE`, `SELECT`, join, grouping, ordering, aggregate |
+| Storage | local encrypted, local plaintext, GitHub encrypted, GitHub plaintext |
+| Durability | manifest-gated mutation log replay와 visible snapshot checkpoint |
+| CLI | `gitdb keygen`, `gitdb query`, `gitdb check` |
+| Example | `examples/local-runtime`의 first-party local runtime 예제 |
+| Package | npm exports, bin, pack dry-run, publish dry-run 설정 |
 
-## GitHub에 저장되는 구조
+## 저장소 구조
 
-plaintext public mode에서는 내부 mutation log와 사람이 보기 쉬운 table snapshot을
-같이 저장합니다.
+Plaintext mode는 내부 상태와 사람이 읽을 수 있는 snapshot을 함께 씁니다:
 
 ```text
 gitdb/v1/
@@ -84,29 +61,7 @@ gitdb/v1/
     00000000000000000001.json
 ```
 
-`schema.json`에는 schema만 들어갑니다.
-
-```json
-{
-  "name": "people",
-  "columns": ["id", "name", "team_id"]
-}
-```
-
-`data.json`에는 row만 들어갑니다.
-
-```json
-[
-  { "id": "p1", "name": "Lin", "team_id": "t1" },
-  { "id": "p2", "name": "Ada", "team_id": "t2" }
-]
-```
-
-그래서 public database repo는 가벼운 Firebase 콘솔처럼 확인할 수 있습니다.
-GitHub 웹에서 `data.json`을 수정하고 commit하면, 다음 GitDB open 시 visible table
-snapshot에서 데이터를 복원합니다.
-
-encrypted mode에서는 opaque file만 저장합니다.
+Encrypted mode는 opaque 파일을 씁니다:
 
 ```text
 gitdb/v1/
@@ -117,14 +72,12 @@ gitdb/v1/
 
 ## 빠른 시작
 
-설치와 빌드:
-
 ```bash
-pnpm install
-pnpm build
+corepack pnpm install
+corepack pnpm build
 ```
 
-first-party ORM 스타일 repository API 사용:
+First-party repository API:
 
 ```ts
 import { LocalPlaintextStore, createGitDbDataSource, defineEntity } from "@3xhaust/gitdb"
@@ -152,291 +105,149 @@ await people.save({ id: "p1", name: "Lin", team_id: "storage" })
 const storagePeople = await people.find({ where: { team_id: "storage" } })
 ```
 
-encrypted local storage로 PostgreSQL facade 실행:
+예제 실행:
 
 ```bash
-export GITDB_KEY="$(node dist/src/cli/main.js keygen)"
-pnpm start:facade
+corepack pnpm example
 ```
 
-`psql`, `pg`, Prisma 등 PostgreSQL client로 접속:
+예제는 local plaintext store를 열고, `teams`와 `people`을 쓰고, join을 실행한 뒤
+store를 다시 열어 JSON summary를 출력합니다.
 
-```bash
-psql postgresql://127.0.0.1:7432/main
-```
+## CLI
 
-예시 SQL:
-
-```sql
-CREATE TABLE teams (id STRING, name STRING);
-CREATE TABLE people (id STRING, name STRING, team_id STRING);
-
-INSERT INTO teams VALUES ('t1', 'Storage');
-INSERT INTO people VALUES ('p1', 'Lin', 't1');
-
-SELECT people.name, teams.name AS team
-FROM people
-JOIN teams ON people.team_id = teams.id;
-```
-
-## Express + Prisma 예제
-
-예제는 실제 API 서비스 형태입니다. Express가 HTTP route를 제공하고, Prisma는
-PostgreSQL facade를 통해 GitDB에 접속하며, GitDB는 example `.env`에 설정된 로컬
-디렉터리 또는 GitHub database repo에 저장합니다.
-
-```bash
-cp examples/express-prisma/.env.example examples/express-prisma/.env
-pnpm example
-```
-
-다른 터미널에서:
-
-```bash
-curl http://127.0.0.1:3090/health
-curl -X POST http://127.0.0.1:3090/seed
-curl http://127.0.0.1:3090/people
-```
-
-example은 기본적으로 plaintext mode입니다.
-
-```env
-GITDB_ENCRYPTION=off
-GITDB_ROOT=.gitdb-example-public
-GITDB_GITHUB_OWNER=3x-haust
-GITDB_GITHUB_REPO=gitdb-example-db
-GITDB_GITHUB_BRANCH=main
-GITDB_GITHUB_PREFIX=gitdb/v1
-GITDB_GITHUB_TOKEN=
-API_PORT=3090
-```
-
-`GITDB_GITHUB_TOKEN`을 비워두면 로컬 파일로 테스트합니다. GitHub에 실제로 쓰고
-싶으면 dedicated database repo에 Contents read/write 권한이 있는 token을 넣으면
-됩니다. repo가 아직 없으면 owner 아래 repo를 생성할 권한도 필요합니다.
-
-## 환경 변수 모델
-
-루트 `.env`는 GitDB facade process용입니다.
-
-```env
-GITDB_ENCRYPTION=on
-GITDB_KEY=generated-by-gitdb-keygen
-GITDB_ROOT=.gitdb
-GITDB_HOST=0.0.0.0
-GITDB_PORT=7432
-```
-
-example은 각자 별도의 `.env`를 둡니다. app 설정과 database-repository 설정이
-package root에 섞이지 않게 하기 위해서입니다.
-
-### 암호화
-
-`GITDB_KEY`는 GitDB가 생성한 base64url 32-byte key여야 합니다.
+Encryption key 생성:
 
 ```bash
 node dist/src/cli/main.js keygen
 ```
 
-이 값은 Git에 올리면 안 됩니다. key가 바뀌면 기존 encrypted data를 복호화할 수
-없습니다.
-
-`GITDB_ENCRYPTION=off`는 table name, column, row를 GitHub에서 공개적으로 보고
-싶은 demo에서만 사용하세요.
-
-### GitHub storage
-
-facade를 실행하는 process에 아래 변수를 넣습니다.
+Store 확인:
 
 ```bash
-export GITDB_GITHUB_OWNER="3x-haust"
-export GITDB_GITHUB_REPO="my-project-db"
-export GITDB_GITHUB_BRANCH="main"
-export GITDB_GITHUB_PREFIX="gitdb/v1"
-export GITDB_GITHUB_TOKEN="github_pat_... or ghp_..."
-gitdb serve
+GITDB_ENCRYPTION=off GITDB_ROOT=.gitdb node dist/src/cli/main.js check
 ```
 
-권장 구조:
+SQL 한 문장 실행:
 
-- source repo: `my-project`
-- database repo: `my-project-db`
-- 공개 demo data: `GITDB_ENCRYPTION=off`
-- 실제 public/private data: `GITDB_ENCRYPTION=on`
-
-## Runtime과 신뢰 모델
-
-`gitdb serve`와 hosted GitDB endpoint는 같은 종류의 runtime입니다. 둘 다
-PostgreSQL facade, SQL engine, GitHub sync를 담당합니다. 중요한 차이는 그 runtime이
-어디에서 실행되느냐입니다.
-
-| Mode | Runtime 위치 | 누가 복호화 가능한가 | 적합한 경우 |
-| --- | --- | --- | --- |
-| Self-hosted encrypted | 유저 앱 서버, VPS, 로컬, private infra | `GITDB_KEY`를 가진 유저 환경만 | 실제 앱 데이터, public encrypted repo, private repo |
-| Hosted plaintext | `gitdb.3xhaust.dev` 같은 GitDB hosted runtime | 어차피 GitHub repo를 보는 모두 | public demo, public dataset, inspectable example |
-| Hosted encrypted | GitDB hosted runtime | hosted runtime이 key를 받아야 함 | 편의성을 위한 managed mode, zero-knowledge 아님 |
-
-암호화된 데이터를 “내 서비스만 복호화 가능”하게 만들고 싶다면 GitDB를 직접
-호스트해야 합니다.
-
-```text
-Your App -> your gitdb serve -> encrypted GitHub repo
+```bash
+GITDB_ENCRYPTION=off GITDB_ROOT=.gitdb \
+  node dist/src/cli/main.js query "CREATE TABLE people (id STRING, name STRING)"
 ```
 
-`GITDB_KEY`를 hosted runtime에 보내는 순간, 그 runtime은 query 실행을 위해
-plaintext를 처리할 수 있습니다. 이건 의도적으로 key를 맡기는 managed mode이지,
-운영자도 볼 수 없는 구조가 아닙니다.
+## 환경 변수
+
+Local plaintext mode:
+
+```env
+GITDB_ENCRYPTION=off
+GITDB_ROOT=.gitdb
+```
+
+Local encrypted mode:
+
+```env
+GITDB_ENCRYPTION=on
+GITDB_KEY=generated-by-gitdb-keygen
+GITDB_ROOT=.gitdb
+```
+
+GitHub 저장소를 쓸 때는 아래 값을 추가합니다:
+
+```env
+GITDB_GITHUB_OWNER=3x-haust
+GITDB_GITHUB_REPO=my-project-db
+GITDB_GITHUB_BRANCH=main
+GITDB_GITHUB_PREFIX=gitdb/v1
+GITDB_GITHUB_TOKEN=github_token_with_contents_write_access
+```
+
+로컬 개발만 할 때는 `GITDB_GITHUB_TOKEN`을 비워둡니다. `GITDB_ENCRYPTION=off`는
+table 이름, column, row가 공개되어도 되는 demo에서만 사용하세요.
 
 ## 아키텍처
 
-GitDB는 네 층으로 나뉩니다.
+GitDB는 네 계층으로 나뉩니다:
 
-1. First-party ORM API
-   - `DataSource`, `Repository`, `save`, `find`, `findOne`, `delete`,
-     explicit transaction을 제공합니다.
-   - 새 앱은 PostgreSQL 호환 hop 없이 GitDB runtime에 더 가깝게 붙을 수
-     있습니다.
+1. First-party API
+   - `DataSource`, `Repository`, `save`, `find`, `findOne`, `delete`, raw
+     `query`, transaction access를 제공합니다.
+   - 새 앱이 GitDB runtime 표면에 직접 붙도록 합니다.
 
-2. PostgreSQL-compatible facade
-   - 기존 client용 로컬 TCP endpoint를 엽니다.
-   - Prisma, `pg`, raw SQL client가 평범한 PostgreSQL connection string으로
-     접속합니다.
+2. SQL engine
+   - Schema, mutation, query, join, grouping, ordering, result row를 처리합니다.
+   - Local mutation을 persistence 전에 직렬화합니다.
 
-3. SQL engine
-   - schema, mutation execution, query execution, join, grouping, result row를
-     처리합니다.
-   - local write transaction을 직렬화합니다.
-   - Node.js client와 ORM raw-query 흐름에서 자주 나오는 PostgreSQL subset을
-     우선 지원합니다.
+3. Storage provider
+   - Local encrypted store
+   - Local plaintext store
+   - GitHub encrypted/plaintext store
 
-4. Storage provider
-   - 개발/테스트용 local encrypted store
-   - visible snapshot용 local plaintext store
-   - remote durability용 GitHub encrypted/plaintext store
+4. Audit and recovery model
+   - Manifest가 committed sequence를 기록합니다.
+   - Mutation log는 open 시 replay 가능합니다.
+   - Visible snapshot은 plaintext reopen path를 빠르게 합니다.
 
 자세한 내용은 [ARCHITECTURE.md](ARCHITECTURE.md)를 참고하세요.
 
 ## 벤치마크
 
-로컬 벤치마크:
+Local benchmark:
 
 ```bash
-pnpm benchmark
+corepack pnpm benchmark
 ```
 
-현재 runtime과 이전 문서화된 run을 비교하고 웹사이트 evidence를 갱신:
+Website benchmark evidence 갱신:
 
 ```bash
-GITDB_BENCH_ROWS=250 pnpm benchmark:compare
+GITDB_BENCH_ROWS=250 corepack pnpm benchmark:site
 ```
 
-GitHub write 벤치마크:
+이전 local run과 비교:
 
 ```bash
-GITDB_BENCH_GITHUB_ROWS=2 pnpm benchmark:github
+GITDB_BENCH_ROWS=250 corepack pnpm benchmark:compare
 ```
 
-최근 측정 결과:
+최근 측정:
 
 | Scenario | Rows | Write ms | Writes/s | Join ms | Reopen ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| local plaintext throttled visible snapshots | 250 | 97.55 | 2562.73 | 3.28 | 47.42 |
-| local encrypted mutation log | 250 | 97.23 | 2571.34 | 0.87 | 45.26 |
-| postgres facade over local encrypted | 250 | 148.46 | 1683.91 | 2.31 | 0.00 |
+| local plaintext throttled visible snapshots | 250 | 146.75 | 1703.61 | 4.88 | 77.62 |
+| local encrypted mutation log | 250 | 234.37 | 1066.70 | 1.18 | 78.31 |
+| orm local plaintext | 250 | 5377.34 | 46.49 | 1.30 | 136.29 |
 
-이전 문서화된 run과 비교하면 local plaintext write는 173.14 writes/s에서
-2562.73 writes/s로 개선되어 14.80x입니다. local encrypted write는 328.09
-writes/s에서 2571.34 writes/s로 개선되어 7.84x입니다.
-
-해석은 분명합니다. local execution은 example, demo, 저빈도 workload에 쓸 수
-있는 수준입니다. single-statement mutation은 더 이상 매 write마다 전체 in-memory
-database를 clone하지 않고, persistence 실패 시 committed manifest 상태로
-복구합니다. 하지만 mutation마다 GitHub Contents API를 직접 호출하는 방식은 hot
-path가 될 수 없습니다. WAL, index, compaction, batched Git commit은 현재 완성된
-OLTP 보장이 아니라 다음 storage-engine 작업입니다.
+해석: raw local execution은 demo와 저빈도 프로젝트 데이터에 충분히 빠릅니다.
+Repository `save()`는 row마다 작은 transaction을 쓰기 때문에 안전하지만 아직
+느립니다. 다음 성능 작업은 batch repository write, page-level snapshot, index,
+log compaction, batched Git sync입니다.
 
 자세한 내용은 [BENCHMARKS.md](BENCHMARKS.md)를 참고하세요.
 
-## 성능 개선 로드맵
-
-다음 성능 개선은 facade보다 storage 구조가 핵심입니다.
-
-- Local WAL first: `fast` mode에서는 local durable write 후 성공 반환
-- Batched Git commits: 반복 Contents API write를 Git Database tree commit으로 교체
-- Snapshot throttling: 매 mutation마다 `data.json`을 다시 쓰지 않기
-- Chunked table pages: row 하나 때문에 table 전체를 다시 쓰지 않기
-- Local primary/secondary index: join/filter가 GitHub hot path를 타지 않게 하기
-- Manifest versions: cold start에서 unchanged table read 생략
-- Strong mode: 필요할 때만 GitHub commit 완료까지 block
-
-## 보안 모델
-
-encrypted mode에서는 manifest와 mutation log를 AES-256-GCM으로 암호화합니다.
-복호화 key는 repository에 저장하지 않습니다.
-
-public GitHub repository에서는 암호화해도 아래 metadata는 드러날 수 있습니다.
-
-- commit 시간
-- file 개수
-- 대략적인 file 크기
-- write 빈도
-
-완화 방법은 batch, padding, compaction, 향후 opaque path storage입니다.
-
 ## 현재 한계
 
-- SQL 지원 범위는 현재 GitDB engine이 실행하는 subset입니다.
-- PostgreSQL catalog emulation은 아직 완전하지 않습니다.
-- multi-process writer는 GitHub state로 감지하지만, 고동시성 OLTP database는
-  아닙니다.
-- GitHub Contents API mode는 demo/correctness test용이지 production write
-  throughput용이 아닙니다.
-- public plaintext mode는 말 그대로 공개 모드입니다.
+- SQL 지원 범위는 현재 실행 가능한 subset으로 제한됩니다.
+- Repository `save()`는 bulk insert에 최적화되어 있지 않습니다.
+- Multi-process writer는 remote state로 보호하지만 아직 높은 동시성의 OLTP DB는 아닙니다.
+- GitHub Contents API mode는 demo와 correctness test용이지 production write throughput용이 아닙니다.
+- Public plaintext mode는 private mode가 아닙니다.
 
-지원하지 않는 SQL은 조용히 틀린 결과를 내지 않고 명시적으로 실패해야 합니다.
+지원하지 않는 SQL은 조용히 성공한 척하지 않고 명시적으로 실패해야 합니다.
 
-## 명령어
+## Commands
 
 ```bash
-pnpm check
-pnpm test
-pnpm build
-pnpm benchmark
-pnpm benchmark:evaluate
-pnpm pack:dry-run
-pnpm publish:dry-run
-pnpm start:facade
-pnpm example
+corepack pnpm check
+corepack pnpm test
+corepack pnpm build
+corepack pnpm benchmark
+corepack pnpm benchmark:evaluate
+corepack pnpm pack:dry-run
+corepack pnpm publish:dry-run
+corepack pnpm example
 ```
 
-## 배포
-
-배포 서비스는 NestJS HTTP control plane과 PostgreSQL-compatible facade를 같은
-process에서 실행합니다.
-
-```bash
-docker build -t gitdb .
-docker run -p 3000:3000 -p 7432:7432 --env-file .env gitdb
-```
-
-`pnpm start`는 HTTP control plane을 실행합니다. `pnpm start:facade`는 local ORM
-test용 TCP facade만 실행합니다.
-
-현재 public HTTP control plane:
-
-```text
-https://gitdb.3xhaust.dev/health
-```
-
-`gitdb.3xhaust.dev`는 hosted GitDB runtime/control-plane instance로 보면 됩니다.
-public plaintext workflow, demo, setup flow, 향후 managed mode에는 유용합니다.
-하지만 encrypted data를 내 서비스만 복호화하게 만들고 싶다면 직접 `gitdb serve`를
-실행하고 `GITDB_KEY`를 그 환경에만 둬야 합니다.
-
-HTTP deployment가 외부 ORM client에 TCP facade를 자동으로 노출하는 것은 아닙니다.
-remote ORM access가 필요하면 application 근처에서 `gitdb serve`를 실행하거나 TCP
-port `7432`를 노출하는 배포 환경을 사용해야 합니다.
-
-## 라이선스
+## License
 
 MIT

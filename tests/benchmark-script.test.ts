@@ -11,7 +11,7 @@ describe("benchmark evaluator", () => {
     const command = scripts["benchmark:evaluate"]
 
     // Then: it builds first and asks the benchmark runner for JSON output.
-    expect(command).toBe("pnpm build && node scripts/benchmark.mjs --json")
+    expect(command).toBe("corepack pnpm build && node scripts/benchmark.mjs --json")
   })
 
   it("supports JSON output and evidence file targets in the benchmark runner", async () => {
